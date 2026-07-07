@@ -43,7 +43,7 @@ jobs:
           export JAVA_HOME=$JAVA_HOME_21_X64
           export PATH=$JAVA_HOME/bin:$PATH
           java -version
-          cd android_build_prep/android
+          cd android
           chmod +x gradlew
           ./gradlew assembleDebug
 
@@ -51,4 +51,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: NEXO-Ride-Debug-APK
-          path: android_build_prep/android/app/build/outputs/apk/debug/*.apk
+          path: android/app/build/outputs/apk/debug/*.apk
