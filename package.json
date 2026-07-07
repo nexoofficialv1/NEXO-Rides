@@ -1,0 +1,15 @@
+{
+  "name": "nexo-ride",
+  "version": "1.0.53",
+  "private": true,
+  "description": "NEXO Ride v1.0.53 V54 - VPS Deploy Pack for ride.nexoofficial.in",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check web/app/app.js && node --check web/app/sw.js",
+    "termux": "bash start_termux.sh",
+    "start:prod": "NODE_ENV=production HOST=127.0.0.1 PORT=3333 node server.js",
+    "vps:check": "node --check server.js && node --check web/app/app.js && node --check web/app/sw.js"
+  },
+  "dependencies": {}
+}
