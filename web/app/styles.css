@@ -498,3 +498,8 @@ button,a,.row,.tile{touch-action:manipulation}
 #kycSubmitBtn:disabled{opacity:.65;filter:grayscale(.25)}
 .ok{border:1px solid rgba(45,255,160,.28);background:rgba(45,255,160,.10);border-radius:16px;padding:12px;color:#dfffee}
 .doc-preview-grid a{display:block;text-decoration:none}
+
+
+/* v2.0 Sprint-1 KYC Camera/File Upload */
+.kyc-upload-grid{grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.kyc-upload-card{border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:12px;background:rgba(255,255,255,.05);display:flex;flex-direction:column;gap:8px;min-height:128px}.kyc-upload-card b{font-size:14px}.kyc-upload-card small{opacity:.78;line-height:1.35}.kyc-upload-actions{display:grid;grid-template-columns:1fr;gap:8px;margin-top:auto}.kyc-upload-btn{display:flex!important;align-items:center;justify-content:center;min-height:42px;border-radius:14px;border:1px solid rgba(255,255,255,.14);background:linear-gradient(135deg,rgba(59,130,246,.18),rgba(16,185,129,.12));font-weight:800;font-size:13px;text-align:center;cursor:pointer}.kyc-upload-btn.file{background:linear-gradient(135deg,rgba(245,158,11,.16),rgba(236,72,153,.10))}.kyc-upload-btn input{position:absolute!important;opacity:0!important;width:1px!important;height:1px!important;pointer-events:none}.doc-pdf{display:flex;align-items:center;justify-content:center;text-decoration:none;color:inherit;background:rgba(255,255,255,.06)}
+@media(max-width:420px){.kyc-upload-grid{grid-template-columns:1fr}.kyc-upload-actions{grid-template-columns:1fr 1fr}.kyc-upload-btn{font-size:12px;padding:6px}}

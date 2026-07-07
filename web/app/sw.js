@@ -1,5 +1,5 @@
-const CACHE='nexo-ride-153v54';
-const ASSETS=['/app/?v=153v54','/app/index.html','/app/styles.css?v=153v54','/app/app.js?v=153v54','/app/manifest.webmanifest?v=153v54','/app/assets/realistic-toto-splash-lite.webp?v=153v54'];
+const CACHE='nexo-ride-v200-kyc-camera-file';
+const ASSETS=['/app/?v200-kyc-camera-file','/app/index.html','/app/styles.css?v200-kyc-camera-file','/app/app.js?v200-kyc-camera-file','/app/manifest.webmanifest?v200-kyc-camera-file','/app/assets/realistic-toto-splash-lite.webp?v200-kyc-camera-file'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS).catch(()=>{})).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
@@ -21,5 +21,5 @@ self.addEventListener('push', event => {
 });
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  event.waitUntil(clients.openWindow('/app/'));
+  event.waitUntil(clients.openWindow('/app/?v=200'));
 });

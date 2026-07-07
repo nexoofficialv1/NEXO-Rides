@@ -1,0 +1,20 @@
+NEXO Ride Stable APK + Server Update Model
+
+1) এই ZIP দিয়ে একবার Stable Base APK build করুন। APK-এর ভিতরে থাকবে:
+- Internet/WebView
+- Camera permission
+- Gallery/Media/File access permission
+- GPS location permission
+- Notification permission
+- Fixed live URL: https://ride.nexoofficial.in/app/?v=1
+
+2) এরপর সাধারণ update-এর জন্য APK rebuild লাগবে না। SmartASP server-এ web/app + server.js update করলেই app-এ update দেখা যাবে।
+
+3) নতুন APK লাগবে শুধু তখন:
+- নতুন native permission দরকার হলে
+- Firebase native push notification
+- background GPS native tracking
+- native MapmyIndia SDK
+- Play Store signed AAB/APK
+
+4) এখন Sprint-1 KYC update SmartASP server-এ deploy করুন এবং Stable APK থেকে test করুন।

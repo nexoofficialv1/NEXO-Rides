@@ -1,6 +1,6 @@
 {
   "name": "nexo-ride",
-  "version": "1.0.53",
+  "version": "2.0.0-sprint1-kyc",
   "private": true,
   "description": "NEXO Ride v1.0.53 V54 - VPS Deploy Pack for ride.nexoofficial.in",
   "main": "server.js",
