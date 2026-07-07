@@ -35,6 +35,7 @@ jobs:
           cp android_build_prep/package.android-wrapper.json package.json
           cp android_build_prep/capacitor.config.ts capacitor.config.ts
           npm install
+          npx cap add android || true
           npx cap sync android
 
       - name: Build Debug APK
