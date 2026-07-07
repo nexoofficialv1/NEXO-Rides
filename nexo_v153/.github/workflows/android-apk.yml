@@ -3,53 +3,106 @@ name: Build NEXO Ride APK
 on:
   workflow_dispatch:
     inputs:
-      live_url:
+      server_url:
         description: "Live NEXO Ride URL"
         required: true
         default: "https://ride.nexoofficial.in/app/?v=1"
-      apk_type:
+      build_type:
         description: "APK type"
         required: true
         default: "debug"
+        type: choice
+        options:
+          - debug
+          - release
 
 jobs:
-  build:
+  build-apk:
+    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '21'
+          distribution: temurin
+          java-version: "21"
 
-      - name: Check versions
+      - name: Show tool versions
         run: |
           node -v
+          npm -v
           java -version
+          echo "JAVA_HOME=$JAVA_HOME"
 
       - name: Prepare Capacitor Android wrapper
+        working-directory: android_build_prep
         run: |
-          cp android_build_prep/package.android-wrapper.json package.json
-          cp android_build_prep/capacitor.config.ts capacitor.config.ts
+          rm -rf android node_modules package-lock.json
+          cp package.android-wrapper.json package.json
           npm install
+          cat > capacitor.config.ts <<CONFIG
+          import type { CapacitorConfig } from '@capacitor/cli';
+
+          const config: CapacitorConfig = {
+            appId: 'com.astratechnologies.nexoride',
+            appName: 'NEXO Ride',
+            webDir: 'web',
+            server: {
+              url: '${{ inputs.server_url }}',
+              cleartext: false
+            }
+          };
+
+          export default config;
+          CONFIG
+          mkdir -p web
+          cat > web/index.html <<HTML
+          <!doctype html>
+          <html>
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>NEXO Ride</title>
+            </head>
+            <body>
+              <script>window.location.replace('${{ inputs.server_url }}');</script>
+              <p>NEXO Ride loading...</p>
+            </body>
+          </html>
+          HTML
+          npx cap add android
           npx cap sync android
 
       - name: Build Debug APK
+        if: inputs.build_type == 'debug'
+        working-directory: android_build_prep/android
         run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          chmod +x ./gradlew
+          ./gradlew --version
+          ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Build Release APK unsigned
+        if: inputs.build_type == 'release'
+        working-directory: android_build_prep/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --version
+          ./gradlew assembleRelease --stacktrace
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NEXO-Ride-Debug-APK
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: NEXO-Ride-APK
+          path: |
+            android_build_prep/android/app/build/outputs/apk/debug/*.apk
+            android_build_prep/android/app/build/outputs/apk/release/*.apk
+          retention-days: 30

@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build NEXO Ride APK
 
 on:
   workflow_dispatch:
@@ -25,16 +25,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java 17
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
+      - name: Show tool versions
+        run: |
+          node -v
+          npm -v
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
 
       - name: Prepare Capacitor Android wrapper
         working-directory: android_build_prep
@@ -67,7 +74,7 @@ jobs:
               <title>NEXO Ride</title>
             </head>
             <body>
-              <script>location.replace('${{ inputs.server_url }}');</script>
+              <script>window.location.replace('${{ inputs.server_url }}');</script>
               <p>NEXO Ride loading...</p>
             </body>
           </html>
@@ -80,6 +87,7 @@ jobs:
         working-directory: android_build_prep/android
         run: |
           chmod +x ./gradlew
+          ./gradlew --version
           ./gradlew assembleDebug --stacktrace
 
       - name: Build Release APK unsigned
@@ -87,6 +95,7 @@ jobs:
         working-directory: android_build_prep/android
         run: |
           chmod +x ./gradlew
+          ./gradlew --version
           ./gradlew assembleRelease --stacktrace
 
       - name: Upload APK artifact
