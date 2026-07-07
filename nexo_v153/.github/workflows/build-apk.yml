@@ -1,4 +1,4 @@
-name: Build NEXO Ride APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -25,23 +25,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "20"
 
-      - name: Setup Java 21
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "17"
 
       - name: Show tool versions
         run: |
           node -v
           npm -v
           java -version
-          echo "JAVA_HOME=$JAVA_HOME"
+          javac -version
 
       - name: Prepare Capacitor Android wrapper
         working-directory: android_build_prep
@@ -81,6 +81,7 @@ jobs:
           HTML
           npx cap add android
           npx cap sync android
+          find android -name "*.gradle" -type f -exec sed -i 's/JavaVersion.VERSION_21/JavaVersion.VERSION_17/g; s/sourceCompatibility = 21/sourceCompatibility = 17/g; s/targetCompatibility = 21/targetCompatibility = 17/g' {} \;
 
       - name: Build Debug APK
         if: inputs.build_type == 'debug'
