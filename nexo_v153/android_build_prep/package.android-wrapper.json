@@ -1,0 +1,13 @@
+{
+  "name": "nexo-ride-android-wrapper",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@capacitor/android": "7.4.3",
+    "@capacitor/cli": "7.4.3",
+    "@capacitor/core": "7.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

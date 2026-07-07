@@ -1,0 +1,390 @@
+{
+  "meta": {
+    "version": "1.0.53-V54_VPS_DEPLOY_PACK_NEXOOFFICIAL",
+    "created_at": "2026-07-06T12:39:10.359Z",
+    "updated_at": "2026-07-06T12:39:10.359Z"
+  },
+  "app_settings": {
+    "app_name": "NEXO Ride",
+    "brand": "Astra Technologies",
+    "package_name": "com.astratechnologies.nexoride",
+    "service_area": "Kalna Sub-Division",
+    "admin_mobile": "6295192839",
+    "admin_email": "bappa.roysm@gmail.com",
+    "support_mobile": "9749983737",
+    "support_email": "babairoykalma@gmail.com",
+    "payment_mode": "Razorpay ready + manual UPI QR later",
+    "otp_mode": "Demo OTP now; Firebase/MSG91 later",
+    "driver_approval_required": true,
+    "map_mode": "Demo route preview now; Mappls/Google API later",
+    "geofence_enabled": true
+  },
+  "users": [
+    {
+      "id": "admin_primary",
+      "name": "NEXO Ride Admin",
+      "mobile": "6295192839",
+      "email": "bappa.roysm@gmail.com",
+      "role": "ADMIN",
+      "nexo_id": "NEXO-ADMIN",
+      "status": "ACTIVE",
+      "created_at": "2026-07-06T12:39:10.360Z",
+      "last_login_at": null,
+      "consent_at": "2026-07-06T12:39:10.360Z",
+      "consent_version": "v1",
+      "must_change_password": true,
+      "password_salt": "f7af7b51f5fc74ad234b4cbed3ea593e",
+      "password_hash": "349570d138391099c91f43127f5deff3660d7b045fc8b338d0efbd3c35a6b7fa"
+    }
+  ],
+  "sessions": [],
+  "driver_profiles": [],
+  "kyc_submissions": [],
+  "rides": [],
+  "fare_rules": {
+    "full_base_fare": 40,
+    "sharing_base_per_seat": 10,
+    "minimum_full": 40,
+    "minimum_sharing": 10,
+    "base_km": 4,
+    "extra_step_km": 2,
+    "extra_step_fare": 5,
+    "sharing_capacity": 4,
+    "night_extra_percent": 0,
+    "platform_commission_percent": 10,
+    "sub_admin_share_percent": 30,
+    "currency": "INR"
+  },
+  "service_area": {
+    "name": "Kalna Sub-Division",
+    "geofence_enabled": true,
+    "bounds": {
+      "minLat": 23.1,
+      "maxLat": 23.29,
+      "minLng": 88.25,
+      "maxLng": 88.43
+    },
+    "center": {
+      "lat": 23.2199,
+      "lng": 88.3625
+    },
+    "road_distance_multiplier": 1.25,
+    "points": [
+      "Kalna Station",
+      "Kalna Hospital",
+      "Kalna Court",
+      "Kalna Bus Stand",
+      "Dhatrigram",
+      "Baidyapur",
+      "Madhupur",
+      "Baghnapara",
+      "Ambika Kalna",
+      "Guptipara Road",
+      "Muktarpur",
+      "Nandai",
+      "Sultanpur",
+      "Badla",
+      "Akalpoush",
+      "Kalna College",
+      "Aghoreswar Park",
+      "Ganga Ghat",
+      "Sub-Division Office",
+      "Rail Gate"
+    ]
+  },
+  "area_catalog": [
+    {
+      "id": "area_kalna_town",
+      "name": "Kalna Town",
+      "status": "ACTIVE",
+      "sub_admin_user_id": null,
+      "created_at": "2026-07-06T12:39:10.383Z"
+    },
+    {
+      "id": "area_dhatrigram",
+      "name": "Dhatrigram",
+      "status": "ACTIVE",
+      "sub_admin_user_id": null,
+      "created_at": "2026-07-06T12:39:10.383Z"
+    },
+    {
+      "id": "area_baidyapur",
+      "name": "Baidyapur",
+      "status": "ACTIVE",
+      "sub_admin_user_id": null,
+      "created_at": "2026-07-06T12:39:10.383Z"
+    },
+    {
+      "id": "area_baghnapara",
+      "name": "Baghnapara",
+      "status": "ACTIVE",
+      "sub_admin_user_id": null,
+      "created_at": "2026-07-06T12:39:10.383Z"
+    },
+    {
+      "id": "area_madhupur",
+      "name": "Madhupur",
+      "status": "ACTIVE",
+      "sub_admin_user_id": null,
+      "created_at": "2026-07-06T12:39:10.383Z"
+    }
+  ],
+  "audit": [],
+  "safety_events": [],
+  "settlements": [],
+  "sub_admins": [],
+  "sub_admin_commissions": [],
+  "sub_admin_commission_settlements": [],
+  "sub_admin_payout_requests": [],
+  "live_locations": [],
+  "otp_requests": [],
+  "notifications": [],
+  "push_tokens": [],
+  "push_delivery_logs": [],
+  "push_settings": {
+    "provider": "DEMO",
+    "firebase_project_id": "",
+    "fcm_server_key_present": false,
+    "vapid_public_key_present": false,
+    "vapid_public_key_label": "",
+    "web_push_enabled": false,
+    "android_push_enabled": false,
+    "demo_delivery_log_enabled": true,
+    "auto_register_web_demo_token": true,
+    "notify_ride_request": true,
+    "notify_driver_accept": true,
+    "notify_payment": true,
+    "notify_sos": true,
+    "notify_support_refund": true,
+    "notify_kyc": true,
+    "note": "DEMO mode-এ notification app-এর ভিতরে এবং delivery log-এ থাকবে। Real push চালাতে Firebase Cloud Messaging + VAPID/Public key configure করুন।",
+    "updated_at": "2026-07-06T12:39:10.383Z"
+  },
+  "monitoring_settings": {
+    "enabled": true,
+    "slow_api_ms": 1500,
+    "error_log_enabled": true,
+    "max_error_logs": 300,
+    "max_audit_logs": 1000,
+    "db_size_warn_mb": 20,
+    "upload_size_warn_mb": 200,
+    "backup_min_count": 1,
+    "production_monitoring_ready": false,
+    "monitoring_webhook_present": false,
+    "note": "Prototype mode-এ local monitoring চলছে। Production-এ uptime monitor, error alert webhook এবং log rotation configure করুন।",
+    "updated_at": "2026-07-06T12:39:10.383Z"
+  },
+  "security_settings": {
+    "enforce_admin_2fa": false,
+    "force_password_change_on_default": true,
+    "min_password_length": 8,
+    "login_rate_limit_enabled": true,
+    "login_rate_limit_per_minute": 8,
+    "account_lockout_enabled": true,
+    "max_failed_login_attempts": 5,
+    "lockout_minutes": 15,
+    "admin_session_days": 7,
+    "require_consent_for_admin": true,
+    "ip_allowlist_enabled": false,
+    "ip_allowlist": [],
+    "trusted_device_required": false,
+    "audit_sensitive_actions": true,
+    "mask_personal_data_in_logs": true,
+    "environment_secrets_required": true,
+    "production_https_required": true,
+    "last_rotation_at": null,
+    "note": "Prototype mode-এ security guardrail ready. Production launch-এর আগে default admin password change, HTTPS, secrets, rate limit এবং admin 2FA enable করুন।",
+    "updated_at": "2026-07-06T12:39:10.383Z"
+  },
+  "security_events": [],
+  "error_logs": [],
+  "kyc_reviews": [],
+  "support_tickets": [],
+  "refund_requests": [],
+  "qa_issues": [],
+  "field_test_runs": [],
+  "payment_orders": [],
+  "payment_webhooks": [],
+  "legal_documents": {
+    "privacy_policy": {
+      "version": "PP-v1",
+      "title": "Privacy Policy",
+      "status": "DRAFT",
+      "last_updated": "2026-07-06T12:39:10.383Z",
+      "mandatory": true,
+      "language": "BN+EN",
+      "summary": "Mobile number, role, live location, ride details, payment status, support/refund records and driver KYC documents will be used for NEXO Ride operation and legal compliance."
+    },
+    "terms": {
+      "version": "TC-v1",
+      "title": "Terms & Conditions",
+      "status": "DRAFT",
+      "last_updated": "2026-07-06T12:39:10.383Z",
+      "mandatory": true,
+      "language": "BN+EN",
+      "summary": "NEXO Ride is a Kalna Sub-Division local Toto booking platform. Booking confirms only after driver acceptance and payment confirmation."
+    },
+    "refund_policy": {
+      "version": "RF-v1",
+      "title": "Refund Policy",
+      "status": "DRAFT",
+      "last_updated": "2026-07-06T12:39:10.383Z",
+      "mandatory": true,
+      "language": "BN+EN",
+      "summary": "Refund requests can be raised from Support Center. Admin will review and mark approved/paid/rejected."
+    },
+    "driver_agreement": {
+      "version": "DA-v1",
+      "title": "Driver Agreement",
+      "status": "DRAFT",
+      "last_updated": "2026-07-06T12:39:10.383Z",
+      "mandatory": true,
+      "language": "BN+EN",
+      "summary": "Driver must complete KYC, obey safety rules, maintain vehicle details, accept rides responsibly and follow payout/commission rules."
+    },
+    "sub_admin_agreement": {
+      "version": "SA-v1",
+      "title": "Sub Admin Agreement",
+      "status": "DRAFT",
+      "last_updated": "2026-07-06T12:39:10.383Z",
+      "mandatory": true,
+      "language": "BN+EN",
+      "summary": "Area Sub Admin can add/manage local drivers/passengers and receives configured share from platform commission of managed drivers."
+    },
+    "data_retention": {
+      "version": "DR-v1",
+      "title": "Data Retention Policy",
+      "status": "DRAFT",
+      "last_updated": "2026-07-06T12:39:10.383Z",
+      "mandatory": true,
+      "language": "BN+EN",
+      "summary": "Ride/payment/KYC/support/audit records should be retained for operations, dispute handling and lawful compliance."
+    }
+  },
+  "legal_acceptance_records": [],
+  "file_uploads": [],
+  "storage_settings": {
+    "provider": "LOCAL_FILE",
+    "upload_dir": "data/uploads",
+    "max_upload_mb": 10,
+    "allowed_mime": [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "application/pdf"
+    ],
+    "secure_file_serving": true,
+    "require_admin_review_for_kyc": true,
+    "auto_link_kyc_files": true,
+    "production_note": "Production launch-এর আগে S3/R2/GCS object storage + signed URL + encryption configure করা উচিত.",
+    "updated_at": "2026-07-06T12:39:10.383Z"
+  },
+  "database_migration_settings": {
+    "current_engine": "LOCAL_JSON",
+    "target_engine": "POSTGRESQL",
+    "migration_mode": "PLANNING",
+    "database_url_present": false,
+    "backup_before_migration": true,
+    "allow_json_export": true,
+    "dry_run_required": true,
+    "last_snapshot_at": null,
+    "last_dry_run_at": null,
+    "last_migration_at": null,
+    "production_note": "Public launch-এর আগে local JSON থেকে PostgreSQL-এ migrate করুন। Migration করার আগে full backup/export রাখবেন.",
+    "updated_at": "2026-07-06T12:39:10.383Z"
+  },
+  "database_migration_logs": [],
+  "auth_settings": {
+    "login_methods": [
+      "PASSWORD",
+      "OTP"
+    ],
+    "default_method": "OTP",
+    "otp_provider": "DEMO",
+    "demo_otp": "123456",
+    "otp_expiry_minutes": 5,
+    "resend_cooldown_seconds": 60,
+    "max_otp_per_mobile_per_hour": 5,
+    "session_days": 30,
+    "rolling_session_enabled": true,
+    "consent_required": true,
+    "password_login_enabled": true,
+    "otp_login_enabled": true,
+    "production_sms_ready": false,
+    "firebase_ready": false,
+    "msg91_ready": false,
+    "twofactor_ready": false,
+    "note": "DEMO OTP testing-এর জন্য। Production launch-এর আগে Firebase/MSG91/2Factor configure করে real SMS OTP চালু করুন।",
+    "updated_at": "2026-07-06T12:39:10.383Z"
+  },
+  "integrations": {
+    "map": {
+      "provider": "DEMO",
+      "mappls_key_present": false,
+      "google_key_present": false,
+      "api_key_configured": false,
+      "search_enabled": false,
+      "route_enabled": false,
+      "navigation_provider": "GOOGLE_WEB",
+      "external_navigation_enabled": true,
+      "mappls_key_label": "",
+      "google_key_label": "",
+      "note": "DEMO mode works without key. Use Mappls/Google key for real pickup/drop search, distance, ETA and in-app map. External navigation link works now."
+    },
+    "otp": {
+      "provider": "DEMO",
+      "demo_code": "123456",
+      "firebase_project_id": "",
+      "msg91_key_present": false,
+      "twofactor_key_present": false,
+      "note": "DEMO OTP is for testing only. Production should use Firebase, MSG91 or 2Factor."
+    },
+    "payment": {
+      "provider": "DEMO",
+      "razorpay_key_id": "",
+      "razorpay_secret_present": false,
+      "manual_upi_id": "",
+      "manual_qr_label": "Manual QR/UPI will be added by admin when available.",
+      "note": "Production payment must verify success from backend/webhook before confirming booking."
+    },
+    "push": {
+      "provider": "DEMO",
+      "firebase_project_id": "",
+      "firebase_config_present": false,
+      "fcm_server_key_present": false,
+      "vapid_public_key_present": false,
+      "web_push_enabled": false,
+      "android_push_enabled": false,
+      "demo_delivery_log_enabled": true,
+      "note": "DEMO push logs notifications now. Production needs Firebase project, FCM server credential and Web Push VAPID key for real push delivery."
+    },
+    "storage": {
+      "provider": "LOCAL_FILE",
+      "upload_dir": "data/uploads",
+      "max_upload_mb": 10,
+      "allowed_mime": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "application/pdf"
+      ],
+      "kyc_local_upload_enabled": true,
+      "production_object_storage_present": false,
+      "note": "Driver KYC files are stored locally for prototype. Production should use S3/R2/GCS with signed URLs, encryption and access audit."
+    },
+    "production": {
+      "server_url": "",
+      "deploy_provider": "DEMO",
+      "domain_name": "",
+      "ssl_configured": false,
+      "repo_url": "",
+      "branch": "main",
+      "database_target": "PostgreSQL",
+      "database_url_present": false,
+      "data_storage_current": "LOCAL_JSON_PERSISTENT",
+      "health_check_path": "/api/health",
+      "deployment_note": "Termux/local preview works now. Production needs HTTPS domain, public server, PostgreSQL and environment secrets."
+    },
+    "updated_at": "2026-07-06T12:39:10.384Z"
+  }
+}
