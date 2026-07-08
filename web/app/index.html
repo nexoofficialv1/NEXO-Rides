@@ -3,14 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#070b1f">
+  <meta name="theme-color" content="#0b74de">
   <title>NEXO Ride</title>
-  <link rel="manifest" href="manifest.webmanifest?v200-kyc-camera-file">
-  <link rel="stylesheet" href="styles.css?v200-kyc-camera-file">
+  <link rel="manifest" href="manifest.webmanifest?v2-sprint6d-profile-logout-razorpay-20260708-01">
+  <link rel="stylesheet" href="styles.css?v2-sprint6d-profile-logout-razorpay-20260708-01">
 </head>
 <body>
   <div id="toast"></div>
-  <main id="app"></main>
-  <script src="app.js?v200-kyc-camera-file"></script>
+  <main id="app">
+    <section class="auth-page"><div class="auth-card"><div class="logo-block"><h1>NEXO Ride</h1></div><h2>Loading NEXO Ride...</h2><p class="subtitle">Premium logo reveal animation loading চলছে।</p></div></section>
+  </main>
+  <script>
+  // Force clear old broken Service Worker/cache before app loads
+  window.clearAppCache = async function(){
+    try{
+      if('serviceWorker' in navigator){
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r=>r.unregister()));
+      }
+      if(window.caches){
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k=>caches.delete(k)));
+      }
+      try{ localStorage.removeItem('nexoRideLang'); }catch(e){}
+    }catch(e){}
+    location.href='/app/?v2-sprint6d-profile-logout-razorpay-20260708-01&t='+Date.now()+Date.now();
+  };
+  </script>
+  <script src="app.js?v2-sprint6d-profile-logout-razorpay-20260708-01" defer></script>
 </body>
 </html>

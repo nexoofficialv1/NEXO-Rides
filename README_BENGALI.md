@@ -1,47 +1,47 @@
-# NEXO Ride v1.0.52 V53 — Termux Start Fix Stable
+# NEXO Ride Sprint-5H Update
 
-এটা V52 stable build-এর startup-script fix।
+এই আপডেটে user-এর reference video অনুযায়ী black logo reveal splash animation যোগ করা হয়েছে।
 
-## Run in Termux
+## কী আছে
+- KWORK-style black startup animation
+- NEXO Ride wordmark letter reveal
+- white wipe transition
+- loading time হলে smooth app preview loader
+- আগের color contrast fix বজায় রাখা হয়েছে
 
-```bash
-cd ~
-pkill -9 node 2>/dev/null
-rm -rf ~/nexo_v53_stable
-mkdir -p ~/nexo_v53_stable
-cd ~/nexo_v53_stable
-cp /sdcard/Download/NEXO_Ride_v1_0_52_V53_TERMUX_START_FIX_STABLE*.zip app.zip
-unzip -o app.zip
-cd nexo_v152
-bash start_termux.sh
+## Deploy
+1. SmartASP root backup রাখুন।
+2. ZIP upload করুন।
+3. Extract করুন।
+4. সব file root folder-এ overwrite করুন।
+5. `data/production.env` এবং `data/nexo_ride_db.json` overwrite/delete করবেন না।
+6. Node.js Settings → Save / Restart।
+
+Open: `/app/?v=splash5h`
+
+## Sprint-6C Razorpay Payment Setup
+
+`data/production.env`-এ Google/OTP/Mappls lines রেখে শুধু Razorpay lines add করুন:
+
+```env
+RAZORPAY_ENABLED=true
+RAZORPAY_MODE=test
+RAZORPAY_KEY_ID=rzp_test_xxxxx
+RAZORPAY_KEY_SECRET=আপনার_RAZORPAY_SECRET
+RAZORPAY_CURRENCY=INR
+RAZORPAY_COMPANY_NAME=NEXO Ride
 ```
 
-## Open
+Test complete হলে live key বসাতে হবে:
 
-- Health: `http://127.0.0.1:3333/api/health`
-- Passenger/Driver: `http://127.0.0.1:3333/app/`
-- Admin: `http://127.0.0.1:3333/app/admin.html`
-
-Health version should show:
-
-`1.0.52-V53_TERMUX_START_FIX_STABLE`
-
-## V54 VPS Deploy Pack - nexoofficial.in
-
-Production URL plan:
-
-- Official website: `https://nexoofficial.in`
-- NEXO Ride app: `https://ride.nexoofficial.in/app/`
-- NEXO Ride admin: `https://ride.nexoofficial.in/app/admin.html`
-- Sub Admin: `https://ride.nexoofficial.in/subadmin/`
-
-See: `docs/VPS_DEPLOY_NEXOOFFICIAL_BENGALI.md`
-
-Quick VPS start after upload/unzip:
-
-```bash
-cd /var/www/nexo-ride/current
-sudo cp deploy/vps/env.production.example .env
-sudo bash deploy/vps/setup_vps_ubuntu.sh
-sudo certbot --nginx -d ride.nexoofficial.in
+```env
+RAZORPAY_MODE=live
+RAZORPAY_KEY_ID=rzp_live_xxxxx
+RAZORPAY_KEY_SECRET=আপনার_LIVE_SECRET
 ```
+
+Secret chat-এ বা frontend-এ দেবেন না।
+
+
+## Sprint-6E Hotfix
+Admin approve করার পরও Driver app-এ KYC Required দেখানোর সমস্যা ঠিক করা হয়েছে। GPS ON/OFF/Last GPS status Driver panel-এ দেখা যাবে।

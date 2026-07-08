@@ -1,70 +1,17 @@
 {
   "name": "NEXO Ride",
   "short_name": "NEXO Ride",
-  "description": "NEXO Ride Passenger/Driver PWA v1.0.48 V48 with push device center.",
-  "start_url": "/app/?v=149v50",
+  "description": "NEXO Ride stable server-update APK container.",
+  "start_url": "/app/?v=prod-cache-reset",
   "scope": "/app/",
   "display": "standalone",
   "background_color": "#070b1f",
   "theme_color": "#070b1f",
   "icons": [
-    {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    }
+    {"src":"icon-192.png","sizes":"192x192","type":"image/png"},
+    {"src":"icon-512.png","sizes":"512x512","type":"image/png"}
   ],
   "id": "/app/",
   "orientation": "portrait",
-  "categories": [
-    "travel",
-    "navigation",
-    "utilities"
-  ],
-  "shortcuts": [
-    {
-      "name": "Book Toto",
-      "short_name": "Book",
-      "description": "Open NEXO Ride booking screen",
-      "url": "/app/?v=149v50&shortcut=book",
-      "icons": [
-        {
-          "src": "icon-192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        }
-      ]
-    },
-    {
-      "name": "My Rides",
-      "short_name": "Rides",
-      "description": "Open ride history",
-      "url": "/app/?v=149v50&shortcut=rides",
-      "icons": [
-        {
-          "src": "icon-192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        }
-      ]
-    },
-    {
-      "name": "Support",
-      "short_name": "Help",
-      "description": "Open support center",
-      "url": "/app/?v=149v50&shortcut=support",
-      "icons": [
-        {
-          "src": "icon-192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        }
-      ]
-    }
-  ]
+  "categories": ["travel", "navigation", "utilities"]
 }

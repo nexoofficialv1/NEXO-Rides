@@ -18,3 +18,7 @@
 - `/app/`
 - `/app/admin.html`
 - `/subadmin/`
+
+
+## Sprint-5F Admin Dashboard Details/Edit
+Admin panel-এর contrast ঠিক করা হয়েছে এবং dashboard card tap করলে details/edit modal খুলবে। data/production.env ও data/nexo_ride_db.json overwrite করবেন না।

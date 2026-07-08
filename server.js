@@ -1,13 +1,31 @@
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
 
-const VERSION = '1.0.53-V54_SMARTASP_NODE_DEPLOY';
+const VERSION = '2.0-SPRINT7A_APK_PERMISSION_GOOGLE_RETURN';
 // SmartASP.NET assigns a dynamic Node.js port in process.env.PORT. Do not hardcode 3333 on shared hosting.
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+function loadEnvFile(file){
+  try{
+    if(!fs.existsSync(file)) return;
+    const lines = fs.readFileSync(file,'utf8').split(/\r?\n/);
+    for(const line of lines){
+      const t = line.trim();
+      if(!t || t.startsWith('#') || !t.includes('=')) continue;
+      const idx = t.indexOf('=');
+      const key = t.slice(0,idx).trim();
+      let val = t.slice(idx+1).trim();
+      if((val.startsWith('\"') && val.endsWith('\"')) || (val.startsWith("'") && val.endsWith("'"))) val = val.slice(1,-1);
+      if(key && process.env[key] === undefined) process.env[key] = val;
+    }
+  }catch(e){ console.error('ENV_LOAD_ERROR', file, e.message); }
+}
+loadEnvFile(path.join(__dirname,'.env'));
+loadEnvFile(path.join(__dirname,'data','production.env'));
 const DB_FILE = path.join(DATA_DIR, 'nexo_ride_db.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(DATA_DIR, 'uploads');
@@ -25,6 +43,96 @@ function salt(){ return crypto.randomBytes(16).toString('hex'); }
 function hashPassword(password, s){ return crypto.pbkdf2Sync(String(password||''), s, 120000, 32, 'sha256').toString('hex'); }
 function verifyPassword(password, s, h){ if(!s||!h) return false; return hashPassword(password,s) === h; }
 function safeUser(u){ if(!u) return null; const {password_hash,password_salt,...rest}=u; return rest; }
+
+function normalizeIndianMobile(mobile){
+  let d = String(mobile||'').replace(/\D/g,'');
+  if(d.length === 10) d = '91' + d;
+  if(d.length === 12 && d.startsWith('91')) return d;
+  return d;
+}
+function httpGetJson(url){
+  return new Promise((resolve,reject)=>{
+    const lib = url.startsWith('https://') ? https : http;
+    const req = lib.get(url, {timeout:15000, headers:{'User-Agent':'NEXO-Ride-OTP/2.0'}}, (resp)=>{
+      let data='';
+      resp.on('data', chunk => data += chunk);
+      resp.on('end', ()=>{
+        try{ resolve({statusCode:resp.statusCode, json:JSON.parse(data), raw:data}); }
+        catch(e){ resolve({statusCode:resp.statusCode, json:null, raw:data}); }
+      });
+    });
+    req.on('timeout', ()=>{ req.destroy(new Error('OTP gateway timeout')); });
+    req.on('error', reject);
+  });
+}
+function twoFactorApiKey(){ return process.env.TWOFACTOR_API_KEY || process.env.TWO_FACTOR_API_KEY || ''; }
+function mapplsStaticKey(){ return process.env.MAPPLS_STATIC_KEY || process.env.MAPPLS_WEB_KEY || process.env.MAPPLS_API_KEY || ''; }
+function googleMapsKey(){ return process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_WEB_KEY || ''; }
+function envBool(v){ return String(v||'').trim().toLowerCase()==='true' || String(v||'').trim()==='1' || String(v||'').trim().toLowerCase()==='yes'; }
+function googleClientId(){ return process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID || ''; }
+function googleClientSecret(){ return process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_OAUTH_CLIENT_SECRET || ''; }
+function googleLoginEnabled(){ return envBool(process.env.GOOGLE_LOGIN_ENABLED) && !!googleClientId() && !!googleClientSecret(); }
+function publicBaseUrl(req){
+  const envUrl = String(process.env.SERVER_URL || '').trim().replace(/\/$/,'');
+  if(envUrl) return envUrl;
+  const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim() || 'https';
+  const host = req.headers.host || 'ride.nexoofficial.in';
+  return `${proto}://${host}`;
+}
+function googleCallbackUrl(req){ return String(process.env.GOOGLE_CALLBACK_URL || `${publicBaseUrl(req)}/api/auth/google/callback`).trim(); }
+function base64url(v){ return Buffer.from(String(v),'utf8').toString('base64').replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_'); }
+function unbase64url(v){ let s=String(v||'').replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4) s+='='; return Buffer.from(s,'base64').toString('utf8'); }
+function googleStateSign(payload){ const secret=process.env.APP_SECRET || process.env.SESSION_SECRET || googleClientSecret() || 'nexo-ride-google'; return crypto.createHmac('sha256', secret).update(payload).digest('hex'); }
+function makeGoogleState(role='PASSENGER', opts={}){ const payload=base64url(JSON.stringify({role:String(role||'PASSENGER').toUpperCase(), ts:Date.now(), nonce:crypto.randomBytes(8).toString('hex'), return_app:!!opts.return_app, source:String(opts.source||'web')})); return `${payload}.${googleStateSign(payload)}`; }
+function verifyGoogleState(state){
+  const [payload,sig]=String(state||'').split('.');
+  if(!payload || !sig || googleStateSign(payload)!==sig) return null;
+  try{ const j=JSON.parse(unbase64url(payload)); if(Date.now()-Number(j.ts||0)>10*60*1000) return null; return j; }catch(e){ return null; }
+}
+function httpPostFormJson(url, form, headers={}){
+  return new Promise((resolve,reject)=>{
+    const u = new URL(url);
+    const data = new URLSearchParams(form).toString();
+    const opts = {method:'POST', hostname:u.hostname, path:u.pathname+u.search, port:u.port || 443, timeout:15000, headers:{'Content-Type':'application/x-www-form-urlencoded','Content-Length':Buffer.byteLength(data),'User-Agent':'NEXO-Ride-GoogleAuth/6A',...headers}};
+    const req = https.request(opts, resp=>{ let body=''; resp.on('data',ch=>body+=ch); resp.on('end',()=>{ try{ resolve({statusCode:resp.statusCode,json:JSON.parse(body),raw:body}); }catch(e){ resolve({statusCode:resp.statusCode,json:null,raw:body}); } }); });
+    req.on('timeout',()=>req.destroy(new Error('Google OAuth timeout')));
+    req.on('error',reject);
+    req.write(data); req.end();
+  });
+}
+function httpGetJsonWithHeaders(url, headers={}){
+  return new Promise((resolve,reject)=>{
+    const lib = url.startsWith('https://') ? https : http;
+    const req = lib.get(url, {timeout:15000, headers:{'User-Agent':'NEXO-Ride-GoogleAuth/6A',...headers}}, resp=>{ let data=''; resp.on('data',ch=>data+=ch); resp.on('end',()=>{ try{ resolve({statusCode:resp.statusCode,json:JSON.parse(data),raw:data}); }catch(e){ resolve({statusCode:resp.statusCode,json:null,raw:data}); } }); });
+    req.on('timeout',()=>req.destroy(new Error('Google userinfo timeout')));
+    req.on('error',reject);
+  });
+}
+async function sendOtpViaGateway(provider, mobile, purpose){
+  provider = String(provider||'DEMO').toUpperCase();
+  if(provider !== 'TWOFACTOR') return null;
+  const key = twoFactorApiKey();
+  if(!key) throw new Error('TWOFACTOR_API_KEY not configured');
+  const phone = normalizeIndianMobile(mobile);
+  const template = String(process.env.TWOFACTOR_TEMPLATE_NAME || '').trim();
+  const url = `https://2factor.in/API/V1/${encodeURIComponent(key)}/SMS/${encodeURIComponent(phone)}/AUTOGEN` + (template ? `/${encodeURIComponent(template)}` : '');
+  const r = await httpGetJson(url);
+  const j = r.json || {};
+  if(String(j.Status||'').toLowerCase() !== 'success') throw new Error('2Factor send failed: ' + (j.Details || r.raw || r.statusCode));
+  return {gateway:'2FACTOR', phone, session_id:String(j.Details||''), raw_status:j.Status, purpose};
+}
+async function verifyOtpViaGateway(reqItem, otp){
+  const provider = String(reqItem?.provider||'DEMO').toUpperCase();
+  if(provider !== 'TWOFACTOR') return !!(reqItem && reqItem.code_hash === sha(otp));
+  const key = twoFactorApiKey();
+  if(!key) throw new Error('TWOFACTOR_API_KEY not configured');
+  const session = String(reqItem.gateway_session_id || reqItem.session_id || '').trim();
+  if(!session) return false;
+  const url = `https://2factor.in/API/V1/${encodeURIComponent(key)}/SMS/VERIFY/${encodeURIComponent(session)}/${encodeURIComponent(String(otp||'').trim())}`;
+  const r = await httpGetJson(url);
+  const j = r.json || {};
+  return String(j.Status||'').toLowerCase() === 'success' && String(j.Details||'').toLowerCase().includes('matched');
+}
 
 function createAdminUser(){
   const s = salt();
@@ -56,9 +164,10 @@ function appSettings(){
     support_mobile:'9749983737',
     support_email:'babairoykalma@gmail.com',
     payment_mode:'Razorpay ready + manual UPI QR later',
-    otp_mode:'Demo OTP now; Firebase/MSG91 later',
-    driver_approval_required:true,
-    map_mode:'Demo route preview now; Mappls/Google API later',
+    otp_mode:'2Factor SMS OTP ready; Demo fallback available',
+    driver_approval_required:false,
+    map_mode: process.env.MAP_PROVIDER==='MAPPLS' ? 'Mappls/MapmyIndia enabled' : 'Demo route preview now; Mappls/Google API later',
+    matching_mode:'Nearest online approved drivers',
     geofence_enabled:true
   };
 }
@@ -66,19 +175,20 @@ function appSettings(){
 function defaultIntegrations(){
   const mapProvider = String(process.env.MAP_PROVIDER || 'DEMO').toUpperCase();
   const otpProvider = String(process.env.OTP_PROVIDER || 'DEMO').toUpperCase();
-  const paymentProvider = String(process.env.PAYMENT_PROVIDER || 'DEMO').toUpperCase();
+  const paymentProvider = String(process.env.PAYMENT_PROVIDER || (envBool(process.env.RAZORPAY_ENABLED) || process.env.RAZORPAY_KEY_ID ? 'RAZORPAY' : 'DEMO')).toUpperCase();
   return {
     map:{
       provider: mapProvider,
-      mappls_key_present: !!process.env.MAPPLS_API_KEY,
-      google_key_present: !!process.env.GOOGLE_MAPS_API_KEY,
-      api_key_configured: !!(process.env.MAPPLS_API_KEY || process.env.GOOGLE_MAPS_API_KEY),
+      mappls_key_present: !!mapplsStaticKey(),
+      google_key_present: !!googleMapsKey(),
+      api_key_configured: !!(mapplsStaticKey() || googleMapsKey()),
       search_enabled: mapProvider !== 'DEMO',
       route_enabled: mapProvider !== 'DEMO',
-      navigation_provider: process.env.NAVIGATION_PROVIDER || 'GOOGLE_WEB',
+      navigation_provider: process.env.NAVIGATION_PROVIDER || (mapProvider==='MAPPLS' ? 'MAPPLS_WEB' : 'GOOGLE_WEB'),
       external_navigation_enabled: true,
-      mappls_key_label: process.env.MAPPLS_API_KEY ? 'SET_FROM_ENV' : '',
-      google_key_label: process.env.GOOGLE_MAPS_API_KEY ? 'SET_FROM_ENV' : '',
+      mappls_key_label: mapplsStaticKey() ? 'SET_FROM_ENV' : '',
+      google_key_label: googleMapsKey() ? 'SET_FROM_ENV' : '',
+      mappls_public_key_enabled: envBool(process.env.MAPPLS_PUBLIC_KEY_ENABLED),
       note:'DEMO mode works without key. Use Mappls/Google key for real pickup/drop search, distance, ETA and in-app map. External navigation link works now.'
     },
     otp:{
@@ -96,6 +206,14 @@ function defaultIntegrations(){
       manual_upi_id: process.env.MANUAL_UPI_ID || '',
       manual_qr_label:'Manual QR/UPI will be added by admin when available.',
       note:'Production payment must verify success from backend/webhook before confirming booking.'
+    },
+    auth:{
+      google_login_enabled: googleLoginEnabled(),
+      google_client_id_present: !!googleClientId(),
+      google_client_secret_present: !!googleClientSecret(),
+      google_callback_url: process.env.GOOGLE_CALLBACK_URL || '',
+      passenger_only:true,
+      note:'Passenger Google Login uses secure OAuth redirect. Mobile OTP remains fallback and driver login stays OTP/KYC.'
     },
     push:{
       provider:String(process.env.PUSH_PROVIDER || 'DEMO').toUpperCase(),
@@ -136,15 +254,31 @@ function defaultIntegrations(){
 function mergeIntegrations(saved){
   const d = defaultIntegrations();
   const s = saved || {};
-  return {
+  const merged = {
     map:{...d.map, ...(s.map||{})},
     otp:{...d.otp, ...(s.otp||{})},
     payment:{...d.payment, ...(s.payment||{})},
     push:{...d.push, ...(s.push||{})},
+    auth:{...d.auth, ...(s.auth||{})},
     storage:{...d.storage, ...(s.storage||{})},
     production:{...d.production, ...(s.production||{})},
     updated_at:s.updated_at || d.updated_at
   };
+  // production.env must override old admin/demo settings after deployment
+  if(process.env.MAP_PROVIDER) merged.map.provider = String(process.env.MAP_PROVIDER).toUpperCase();
+  if(process.env.NAVIGATION_PROVIDER) merged.map.navigation_provider = String(process.env.NAVIGATION_PROVIDER).toUpperCase();
+  if(mapplsStaticKey()){ merged.map.mappls_key_present = true; merged.map.api_key_configured = true; merged.map.mappls_key_label = 'SET_FROM_ENV'; }
+  if(googleMapsKey()){ merged.map.google_key_present = true; merged.map.api_key_configured = true; merged.map.google_key_label = 'SET_FROM_ENV'; }
+  merged.map.mappls_public_key_enabled = envBool(process.env.MAPPLS_PUBLIC_KEY_ENABLED);
+  if(process.env.OTP_PROVIDER) merged.otp.provider = String(process.env.OTP_PROVIDER).toUpperCase();
+  if(twoFactorApiKey()) merged.otp.twofactor_key_present = true;
+  if(process.env.PAYMENT_PROVIDER) merged.payment.provider = String(process.env.PAYMENT_PROVIDER).toUpperCase();
+  if(envBool(process.env.RAZORPAY_ENABLED) || process.env.RAZORPAY_KEY_ID){
+    merged.payment.provider = 'RAZORPAY';
+    merged.payment.razorpay_key_id = process.env.RAZORPAY_KEY_ID || merged.payment.razorpay_key_id || '';
+    merged.payment.razorpay_secret_present = !!process.env.RAZORPAY_KEY_SECRET;
+  }
+  return merged;
 }
 function integrationReadiness(db){
   const i = mergeIntegrations(db.integrations);
@@ -584,6 +718,7 @@ function defaultDb(){
     service_area:{
       name:'Kalna Sub-Division',
       geofence_enabled:true,
+      driver_auto_approve_inside_service_area:true,
       bounds:{minLat:23.10,maxLat:23.29,minLng:88.25,maxLng:88.43},
       center:{lat:23.2199,lng:88.3625},
       road_distance_multiplier:1.25,
@@ -603,12 +738,14 @@ function defaultDb(){
     audit:[],
     safety_events:[],
     settlements:[],
+    driver_payout_requests:[],
     sub_admins:[],
     sub_admin_commissions:[],
     sub_admin_commission_settlements:[],
     sub_admin_payout_requests:[],
     live_locations:[],
     otp_requests:[],
+    password_reset_requests:[],
     notifications:[],
     push_tokens:[],
     push_delivery_logs:[],
@@ -651,12 +788,14 @@ function readDb(){
     db.audit = db.audit || [];
     db.safety_events = db.safety_events || [];
     db.settlements = db.settlements || [];
+    db.driver_payout_requests = db.driver_payout_requests || [];
     db.sub_admins = db.sub_admins || [];
     db.sub_admin_commissions = db.sub_admin_commissions || [];
     db.sub_admin_commission_settlements = db.sub_admin_commission_settlements || [];
     db.sub_admin_payout_requests = db.sub_admin_payout_requests || [];
     db.live_locations = db.live_locations || [];
     db.otp_requests = db.otp_requests || [];
+    db.password_reset_requests = db.password_reset_requests || [];
     db.notifications = db.notifications || [];
     db.push_tokens = db.push_tokens || [];
     db.push_delivery_logs = db.push_delivery_logs || [];
@@ -685,10 +824,11 @@ function readDb(){
     if(!db.fare_rules.base_km || db.fare_rules.minimum_full !== 40 || db.fare_rules.minimum_sharing !== 10){
       db.fare_rules = defaultDb().fare_rules;
     }
-    db.service_area = {...defaultDb().service_area, ...(db.service_area || {})};
+    db.service_area = {...defaultDb().service_area, driver_matching_radius_km:8, max_driver_candidates:5, ...(db.service_area || {})};
     db.service_area.bounds = db.service_area.bounds || defaultDb().service_area.bounds;
     db.service_area.center = db.service_area.center || defaultDb().service_area.center;
     db.service_area.road_distance_multiplier = Number(db.service_area.road_distance_multiplier || 1.25);
+    if(db.service_area.driver_auto_approve_inside_service_area === undefined) db.service_area.driver_auto_approve_inside_service_area = true;
     // v1.0.14 migration: driver earnings/rating fields.
     for(const d of db.driver_profiles){
       if(d.total_earnings === undefined) d.total_earnings = 0;
@@ -699,6 +839,14 @@ function readDb(){
       if(d.kyc_status === undefined){
         const k = driverKycSummary(db,d);
         d.kyc_status = k.complete ? (d.status==='APPROVED'?'VERIFIED':'SUBMITTED') : 'INCOMPLETE';
+      }
+      // Sprint-6E hotfix: Admin profile approval and KYC verification must not drift.
+      // Older builds could set status=APPROVED while leaving kyc_status=INCOMPLETE/SUBMITTED,
+      // causing the driver app to still show "KYC Required" after admin approval.
+      if(String(d.status||'').toUpperCase()==='APPROVED' && !['VERIFIED','REJECTED'].includes(String(d.kyc_status||'').toUpperCase())){
+        d.kyc_status = 'VERIFIED';
+        d.kyc_admin_synced_at = d.kyc_admin_synced_at || now();
+        d.kyc_last_message = d.kyc_last_message || 'Admin approved profile; KYC status synced to VERIFIED.';
       }
     }
     if(db.fare_rules.platform_commission_percent === undefined) db.fare_rules.platform_commission_percent = 10;
@@ -860,8 +1008,10 @@ function serveDir(res, baseDir, relPath){
   if(!resolved.startsWith(path.resolve(baseDir))) return sendText(res,403,'Forbidden');
   if(fs.existsSync(resolved) && fs.statSync(resolved).isFile()){
     const type = extType(resolved);
-    const cache = resolved.endsWith('index.html') ? 'no-store' : 'public, max-age=3600';
-    res.writeHead(200, {'Content-Type':type,'Cache-Control':cache});
+    const ext = path.extname(resolved).toLowerCase();
+    const noCacheExts = ['.html','.js','.css','.webmanifest','.json'];
+    const cache = noCacheExts.includes(ext) ? 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0' : 'public, max-age=300';
+    res.writeHead(200, {'Content-Type':type,'Cache-Control':cache,'Pragma':'no-cache','Expires':'0'});
     fs.createReadStream(resolved).pipe(res);
     return true;
   }
@@ -985,7 +1135,8 @@ function makeSession(db,user){
 }
 function findUser(db,login){
   const l = String(login||'').trim().toLowerCase();
-  return db.users.find(u=>String(u.mobile||'').toLowerCase()===l || String(u.email||'').toLowerCase()===l || String(u.nexo_id||'').toLowerCase()===l);
+  if(!l) return null;
+  return db.users.find(u=>String(u.mobile||'').toLowerCase()===l || String(u.email||'').toLowerCase()===l || String(u.nexo_id||'').toLowerCase()===l || String(u.google_id||'').toLowerCase()===l);
 }
 function serviceAreaBounds(db){
   return (db.service_area && db.service_area.bounds) || {minLat:23.10,maxLat:23.29,minLng:88.25,maxLng:88.43};
@@ -1043,11 +1194,113 @@ function estimateFare(db, pickup, drop, ride_type, seats=1){
   const fare = Math.max(Number(rules.minimum_full || 40), baseFare + extra);
   return {...common, seats:0, base_fare:baseFare, fare_per_seat:0, estimated_fare:fare, currency:rules.currency, ride_type:'FULL', fare_breakup:{...common.fare_breakup, base_fare:baseFare, total:fare}};
 }
-function activeDrivers(db){
-  return db.driver_profiles.filter(d=>d.status==='APPROVED' && d.online);
+function driverOnlineEligibility(prof){
+  if(!prof) return {ok:false, detail:'Driver profile required'};
+  const status = String(prof.status || 'PENDING').toUpperCase();
+  const kyc = String(prof.kyc_status || 'INCOMPLETE').toUpperCase();
+  if(status === 'SUSPENDED') return {ok:false, detail:'Driver profile suspended. Contact admin/support'};
+  if(status === 'REJECTED' || kyc === 'REJECTED') return {ok:false, detail:'Driver profile/KYC rejected. Re-submit KYC documents'};
+  // Sprint-6E: Admin approval is treated as final driver approval. Older builds could
+  // leave kyc_status stale even after admin approved the profile. Do not block such drivers.
+  if(status === 'APPROVED') return {ok:true, detail:kyc==='VERIFIED'?'KYC verified':'Admin approved; KYC status synced'};
+  if(kyc !== 'VERIFIED') return {ok:false, detail:'KYC verified না হলে Go Online করা যাবে না। Admin approval / KYC verification pending.'};
+  return {ok:true};
 }
 
+function driverGpsHealth(db, prof){
+  const coords = coordsFromRequestOrProfile({}, prof);
+  const last = prof?.last_location_at || prof?.last_online_at || '';
+  let age_minutes = null;
+  if(last){
+    const t = new Date(last).getTime();
+    if(Number.isFinite(t)) age_minutes = Math.max(0, Math.round((Date.now()-t)/60000));
+  }
+  const inside = coords ? isInsideServiceArea(db, coords) : false;
+  const fresh = age_minutes !== null && age_minutes <= 10;
+  return {
+    available: !!coords,
+    gps_on: !!coords && (!!prof?.online || fresh),
+    inside_service_area: inside,
+    fresh,
+    age_minutes,
+    lat: coords?.lat || null,
+    lng: coords?.lng || null,
+    last_location_at: last || null,
+    message: !coords ? 'GPS not updated yet. Press Check GPS / Go Online.' : (inside ? `GPS OK${fresh?'':' (old)'}` : 'GPS outside service area')
+  };
+}
+
+function coordsFromRequestOrProfile(body={}, prof=null){
+  const lat = Number(body.lat ?? body.latitude ?? prof?.lat);
+  const lng = Number(body.lng ?? body.longitude ?? prof?.lng);
+  if(Number.isFinite(lat) && Number.isFinite(lng)) return {lat:Math.round(lat*1000000)/1000000,lng:Math.round(lng*1000000)/1000000};
+  return null;
+}
+
+function autoApproveDriverKycIfEligible(db, prof, user=null, body={}){
+  if(!prof) return {auto_approved:false, reason:'Driver profile required'};
+  const status = String(prof.status || 'PENDING').toUpperCase();
+  if(status === 'SUSPENDED') return {auto_approved:false, reason:'Driver suspended'};
+  if(status === 'REJECTED' && String(prof.kyc_status||'').toUpperCase() === 'REJECTED') return {auto_approved:false, reason:'Rejected profile requires re-submit'};
+  const summary = driverKycSummary(db, prof);
+  if(!summary.complete) return {auto_approved:false, reason:`KYC incomplete: ${summary.docs_present}/${summary.docs_required}`, kyc:summary};
+  const coords = coordsFromRequestOrProfile(body, prof);
+  if(!coords) return {auto_approved:false, reason:'GPS location required for service-area auto approval', kyc:summary};
+  const inside = isInsideServiceArea(db, coords);
+  if(!inside) return {auto_approved:false, reason:'Driver current GPS is outside service area', coords, kyc:summary};
+  if(db.service_area?.driver_auto_approve_inside_service_area === false) return {auto_approved:false, reason:'Auto approval disabled by admin', coords, kyc:summary};
+  const oldStatus = prof.status || 'PENDING';
+  const oldKyc = prof.kyc_status || 'INCOMPLETE';
+  prof.kyc_status = 'VERIFIED';
+  prof.status = 'APPROVED';
+  prof.kyc_auto_approved = true;
+  prof.kyc_auto_approved_at = now();
+  prof.kyc_auto_approved_reason = 'KYC complete + GPS inside service area';
+  prof.kyc_reviewed_at = prof.kyc_auto_approved_at;
+  prof.kyc_reviewed_by = 'AUTO_SERVICE_AREA';
+  prof.lat = coords.lat; prof.lng = coords.lng; prof.last_location_at = now();
+  db.kyc_reviews = db.kyc_reviews || [];
+  db.kyc_reviews.push({id:uid('kycauto'), profile_id:prof.id, driver_user_id:prof.user_id, action:'AUTO_APPROVE', reason:prof.kyc_auto_approved_reason, reviewed_by:'SYSTEM', reviewed_at:prof.kyc_auto_approved_at, coords, service_area:db.service_area?.name||'Kalna Sub-Division', old_status:oldStatus, old_kyc_status:oldKyc});
+  if(user){
+    notifyUsers(db, notificationTargets(db,{user_id:prof.user_id}), {event_type:'DRIVER_KYC_AUTO_APPROVED', priority:'HIGH', title:'KYC Auto Approved', message:'আপনার KYC complete এবং GPS service area-এর ভিতরে পাওয়া গেছে। এখন Go Online করতে পারবেন।'});
+    notifyAdmins(db,{event_type:'DRIVER_KYC_AUTO_APPROVED', priority:'NORMAL', title:'Driver KYC Auto Approved', message:`${user.name||'Driver'} auto approved inside ${db.service_area?.name||'service area'}`, area:prof.area||prof.location||'Kalna', data:{driver_profile_id:prof.id, coords}});
+  }
+  return {auto_approved:true, coords, service_area:db.service_area?.name||'Kalna Sub-Division'};
+}
+function activeDrivers(db){
+  return (db.driver_profiles||[]).filter(d=>driverOnlineEligibility(d).ok && d.online);
+}
+function driverHasActiveRide(db, driverUserId){
+  const activeStatuses = ['DRIVER_ACCEPTED','CONFIRMED','ARRIVED','STARTED'];
+  return (db.rides||[]).some(r=>r.driver_id===driverUserId && activeStatuses.includes(String(r.status||'').toUpperCase()));
+}
+function nearestAvailableDrivers(db, pickupCoords, options={}){
+  const maxRadiusKm = Number(options.max_radius_km || db.service_area?.driver_matching_radius_km || process.env.DRIVER_MATCH_RADIUS_KM || 8);
+  const maxDrivers = Number(options.max_drivers || db.service_area?.max_driver_candidates || process.env.MAX_DRIVER_CANDIDATES || 5);
+  const pickup = pickupCoords || placeCoords('Kalna Station');
+  return activeDrivers(db)
+    .filter(d=>!driverHasActiveRide(db, d.user_id))
+    .map(d=>{
+      const loc = {lat:d.lat||placeCoords(d.location||d.area||'Kalna').lat, lng:d.lng||placeCoords(d.location||d.area||'Kalna').lng};
+      return { ...d, distance_to_pickup_km: distanceKm(loc, pickup) ?? 99, lat:loc.lat, lng:loc.lng };
+    })
+    .filter(d=>Number(d.distance_to_pickup_km) <= maxRadiusKm)
+    .sort((a,b)=>(a.distance_to_pickup_km||99)-(b.distance_to_pickup_km||99) || Number(b.rating||0)-Number(a.rating||0))
+    .slice(0, maxDrivers);
+}
+
+function parseCoordsFromText(text){
+  const m = String(text||'').match(/(-?\d{1,2}(?:\.\d+)?)\s*[, ]\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if(!m) return null;
+  const lat = Number(m[1]);
+  const lng = Number(m[2]);
+  if(!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if(lat < 20 || lat > 27 || lng < 84 || lng > 92) return null;
+  return {lat:Math.round(lat*1000000)/1000000, lng:Math.round(lng*1000000)/1000000};
+}
 function placeCoords(name){
+  const direct = parseCoordsFromText(name);
+  if(direct) return direct;
   const base = {lat:23.2199, lng:88.3625}; // Kalna approx center
   const table = {
     'Kalna Station':{lat:23.2196,lng:88.3622}, 'Kalna Hospital':{lat:23.2247,lng:88.3600},
@@ -1059,7 +1312,15 @@ function placeCoords(name){
     'Badla':{lat:23.1847,lng:88.3118}, 'Akalpoush':{lat:23.1503,lng:88.2956},
     'Kalna College':{lat:23.2142,lng:88.3592}, 'Aghoreswar Park':{lat:23.2189,lng:88.3564},
     'Ganga Ghat':{lat:23.2233,lng:88.3728}, 'Sub-Division Office':{lat:23.2203,lng:88.3649},
-    'Rail Gate':{lat:23.2165,lng:88.3611}, 'Guptipara Road':{lat:23.2088,lng:88.3763}
+    'Rail Gate':{lat:23.2165,lng:88.3611}, 'Guptipara Road':{lat:23.2088,lng:88.3763},
+    'Kalna Bus Stand':{lat:23.2215,lng:88.3615}, 'Kalna New Bus Stand':{lat:23.2220,lng:88.3599},
+    'Kalna Ferry Ghat':{lat:23.2252,lng:88.3741}, '108 Shiv Mandir':{lat:23.2207,lng:88.3677},
+    'Siddheswari More':{lat:23.2182,lng:88.3571}, 'College More':{lat:23.2146,lng:88.3587},
+    'Court More':{lat:23.2221,lng:88.3656}, 'Hospital More':{lat:23.2247,lng:88.3600},
+    'STKK Road':{lat:23.2188,lng:88.3562}, 'Bagnapara Station':{lat:23.1754,lng:88.3866},
+    'Dhatrigram Station':{lat:23.1906,lng:88.4033}, 'Baidyapur Station':{lat:23.1579,lng:88.3467},
+    'Nabadwip Ghat':{lat:23.2257,lng:88.3748}, 'Krishnadebpur':{lat:23.1964,lng:88.3708},
+    'Nibhuji':{lat:23.2289,lng:88.3625}, 'Nibhujii':{lat:23.2289,lng:88.3625}, 'Nibhuji More':{lat:23.2289,lng:88.3625}, 'নিভুজি':{lat:23.2289,lng:88.3625}
   };
   const key = String(name||'').trim();
   if(table[key]) return table[key];
@@ -1087,6 +1348,8 @@ function mapOptions(db){
     api_key_configured: !!(m.api_key_configured || m.mappls_key_present || m.google_key_present),
     mappls_key_present: !!m.mappls_key_present,
     google_key_present: !!m.google_key_present,
+    mappls_public_key_enabled: !!m.mappls_public_key_enabled,
+    mappls_public_key: mapplsStaticKey() || '',
     mappls_key_label: m.mappls_key_label || '',
     google_key_label: m.google_key_label || '',
     search_enabled: provider !== 'DEMO' && !!(m.api_key_configured || m.mappls_key_present || m.google_key_present),
@@ -1131,8 +1394,41 @@ function searchablePlaces(db, q=''){
   const needle = String(q||'').trim().toLowerCase();
   const areaPoints = (db.service_area?.points || []);
   const catalog = (db.area_catalog || []).map(a=>a.name).filter(Boolean);
-  const base = Array.from(new Set([...areaPoints, ...catalog, 'Kalna Station','Kalna Hospital','Kalna Court','Kalna Bus Stand','Dhatrigram','Baidyapur','Madhupur','Baghnapara','Ambika Kalna','Muktarpur']));
-  return base.filter(x=>!needle || String(x).toLowerCase().includes(needle)).slice(0,25).map(name=>({name, coords:placeCoords(name), inside:isInsideServiceArea(db, placeCoords(name))}));
+  const extra = [
+    'Kalna Station','Kalna Hospital','Kalna Court','Kalna Bus Stand','Kalna New Bus Stand',
+    'Dhatrigram','Dhatrigram Station','Baidyapur','Baidyapur Station','Madhupur','Baghnapara','Bagnapara Station',
+    'Ambika Kalna','Muktarpur','Nandai','Sultanpur','Badla','Akalpoush','Kalna College','Aghoreswar Park',
+    'Ganga Ghat','Kalna Ferry Ghat','Nabadwip Ghat','Sub-Division Office','Rail Gate','Guptipara Road',
+    '108 Shiv Mandir','Siddheswari More','College More','Court More','Hospital More','STKK Road','Krishnadebpur','Nibhuji','Nibhujii','Nibhuji More','নিভুজি'
+  ];
+  const direct = parseCoordsFromText(q);
+  const base = Array.from(new Set([...areaPoints, ...catalog, ...extra]));
+  const ranked = base.map(name=>{
+    const n = String(name||'');
+    const l = n.toLowerCase();
+    let score = 0;
+    if(!needle) score = 1;
+    else if(l === needle) score = 100;
+    else if(l.startsWith(needle)) score = 70;
+    else if(l.includes(needle)) score = 40;
+    else score = 0;
+    return {name:n, score};
+  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score || a.name.localeCompare(b.name)).slice(0,30)
+    .map(x=>({name:x.name, coords:placeCoords(x.name), inside:isInsideServiceArea(db, placeCoords(x.name)), type:'PLACE'}));
+  if(direct){
+    ranked.unshift({name:`Pinned GPS ${direct.lat.toFixed(5)},${direct.lng.toFixed(5)}`, coords:direct, inside:isInsideServiceArea(db,direct), type:'GPS'});
+  }
+  if(needle && ranked.length===0){
+    const manual = placeCoords(q);
+    ranked.push({name:`${String(q).trim()} (manual pin)`, coords:manual, inside:isInsideServiceArea(db,manual), type:'MANUAL'});
+  }
+  return ranked.slice(0,30);
+}
+function nearbyPlaces(db, lat, lng, limit=8){
+  const origin = {lat:Number(lat), lng:Number(lng)};
+  if(!Number.isFinite(origin.lat) || !Number.isFinite(origin.lng)) return [];
+  return searchablePlaces(db,'').map(p=>({...p, distance_km: distanceKm(origin,p.coords)}))
+    .sort((a,b)=>(a.distance_km||99)-(b.distance_km||99)).slice(0, Math.max(1, Math.min(20, Number(limit)||8)));
 }
 function upsertLocation(db,user,body={}){
   const lat = Number(body.lat), lng = Number(body.lng);
@@ -1533,6 +1829,22 @@ function rideDto(r, db=null, viewer=null){
     out.driver_mobile = driverUser.mobile || '';
     out.driver_vehicle_no = driverProfile.vehicle_no || '';
     out.driver_rating = driverProfile.rating || 5;
+    const driverLive = (db.live_locations || []).find(x=>x.user_id===r.driver_id) || {};
+    const passengerLive = (db.live_locations || []).find(x=>x.user_id===r.passenger_id) || {};
+    out.driver_lat = driverLive.lat || driverProfile.lat || null;
+    out.driver_lng = driverLive.lng || driverProfile.lng || null;
+    out.driver_last_seen_at = driverLive.updated_at || driverProfile.last_location_at || null;
+    out.passenger_lat = passengerLive.lat || r.passenger_location?.lat || null;
+    out.passenger_lng = passengerLive.lng || r.passenger_location?.lng || null;
+    out.pickup_lat = r.pickup_coords?.lat || null;
+    out.pickup_lng = r.pickup_coords?.lng || null;
+    out.drop_lat = r.drop_coords?.lat || null;
+    out.drop_lng = r.drop_coords?.lng || null;
+    out.driver_rating = driverProfile.rating || 5;
+    if(Array.isArray(out.driver_candidate_ids)){
+      out.driver_candidate_count = out.driver_candidate_ids.length;
+      if(viewer && String(viewer.role||'').toUpperCase()==='DRIVER') out.is_candidate = out.driver_candidate_ids.includes(viewer.id);
+    }
   }
   if(out.status === 'DRIVER_ACCEPTED' && out.payment_due_at){
     out.payment_time_left_seconds = Math.max(0, Math.floor((new Date(out.payment_due_at).getTime() - Date.now())/1000));
@@ -1644,14 +1956,62 @@ function paymentIntegration(db){
 function paymentProviderMode(db){
   return String(paymentIntegration(db).provider || 'DEMO').toUpperCase();
 }
+
+function razorpayKeyId(){ return process.env.RAZORPAY_KEY_ID || ''; }
+function razorpayKeySecret(){ return process.env.RAZORPAY_KEY_SECRET || ''; }
+function razorpayMode(){ return String(process.env.RAZORPAY_MODE || 'test').toLowerCase()==='live' ? 'live' : 'test'; }
+function razorpayCompanyName(){ return process.env.RAZORPAY_COMPANY_NAME || 'NEXO Ride'; }
+function razorpayCurrency(){ return (process.env.RAZORPAY_CURRENCY || 'INR').toUpperCase(); }
+function httpsJsonRequest(urlString, opts={}, bodyObj=null){
+  return new Promise((resolve,reject)=>{
+    try{
+      const u=new URL(urlString);
+      const body=bodyObj?JSON.stringify(bodyObj):'';
+      const req=https.request({hostname:u.hostname, path:u.pathname+u.search, method:opts.method||'GET', headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body),...(opts.headers||{})}}, res=>{
+        let data=''; res.on('data',d=>data+=d); res.on('end',()=>{
+          let parsed={}; try{parsed=data?JSON.parse(data):{};}catch(e){parsed={raw:data};}
+          if(res.statusCode>=200 && res.statusCode<300) return resolve(parsed);
+          const msg=(parsed && parsed.error && (parsed.error.description||parsed.error.reason)) || parsed.message || data || ('HTTP '+res.statusCode);
+          const err=new Error(msg); err.statusCode=res.statusCode; err.payload=parsed; reject(err);
+        });
+      });
+      req.on('error',reject); if(body) req.write(body); req.end();
+    }catch(e){ reject(e); }
+  });
+}
+async function createRazorpayGatewayOrder(ride, user){
+  const key=razorpayKeyId(), secret=razorpayKeySecret();
+  if(!key || !secret) throw new Error('Razorpay key/secret not configured');
+  const amountPaise=Math.max(100, Math.round(Number(ride.estimated_fare||0)*100));
+  const auth=Buffer.from(key+':'+secret).toString('base64');
+  const receipt=String('nexo_'+String(ride.id||uid('ride')).replace(/[^A-Za-z0-9_]/g,'').slice(-25));
+  return await httpsJsonRequest('https://api.razorpay.com/v1/orders', {method:'POST', headers:{Authorization:'Basic '+auth}}, {
+    amount: amountPaise,
+    currency: razorpayCurrency(),
+    receipt,
+    payment_capture: 1,
+    notes:{ride_id:String(ride.id||''), passenger_id:String(user?.id||''), app:'NEXO Ride'}
+  });
+}
+function verifyRazorpayPaymentSignature(orderId, paymentId, signature){
+  const secret=razorpayKeySecret();
+  if(!secret) return false;
+  const expected=crypto.createHmac('sha256', secret).update(String(orderId)+'|'+String(paymentId)).digest('hex');
+  try{
+    const a=Buffer.from(expected,'hex'); const b=Buffer.from(String(signature||''),'hex');
+    return a.length===b.length && crypto.timingSafeEqual(a,b);
+  }catch(e){ return expected===String(signature||''); }
+}
 function paymentOptions(db){
   const p = paymentIntegration(db);
   const provider = paymentProviderMode(db);
   return {
     provider,
     demo_mode: provider === 'DEMO',
-    razorpay_key_id: p.razorpay_key_id || '',
-    razorpay_enabled: provider === 'RAZORPAY' && !!(p.razorpay_key_id || p.key_id_configured),
+    razorpay_key_id: p.razorpay_key_id || razorpayKeyId() || '',
+    razorpay_mode: razorpayMode(),
+    razorpay_company_name: razorpayCompanyName(),
+    razorpay_enabled: provider === 'RAZORPAY' && !!(p.razorpay_key_id || razorpayKeyId() || p.key_id_configured),
     manual_upi_id: p.manual_upi_id || '',
     manual_qr_label: p.manual_qr_label || 'Manual QR/UPI will be added by admin',
     methods: provider === 'RAZORPAY' ? ['RAZORPAY_CHECKOUT','UPI','CARD','NETBANKING'] : provider === 'MANUAL_QR' ? ['MANUAL_UPI_QR','UPI_REFERENCE'] : ['DEMO_PAYMENT','MANUAL_TEST_REFERENCE'],
@@ -1931,8 +2291,86 @@ async function route(req,res){
       return send(res,200,{ok:true, app:'NEXO Ride', version:VERSION, service_area:db.service_area.name, storage:dbStatus(db), time:now()});
     }
 
+    if(method==='GET' && pathname==='/api/env-check'){
+      return send(res,200,{ok:true, version:VERSION, env:{otp_provider:String(process.env.OTP_PROVIDER||'DEMO'), twofactor_key_present:!!twoFactorApiKey(), map_provider:String(process.env.MAP_PROVIDER||'DEMO'), mappls_key_present:!!mapplsStaticKey(), navigation_provider:String(process.env.NAVIGATION_PROVIDER||''), google_login_enabled:googleLoginEnabled(), google_client_id_present:!!googleClientId(), google_client_secret_present:!!googleClientSecret(), production_env_loaded:fs.existsSync(path.join(__dirname,'data','production.env'))}, apk:{package_name:'com.astratechnologies.nexoride', deep_link_scheme:'nexoride://auth/google', permission_fix:'SPRINT7A'}, note:'Secrets are hidden. If key_present is true, configuration file is loaded.'});
+    }
     if(method==='GET' && pathname==='/api/config'){
       return send(res,200,{ok:true, version:VERSION, app_settings:db.app_settings, service_area:db.service_area, area_catalog:db.area_catalog||[], fare_rules:db.fare_rules, integrations: integrationReadiness(db).integrations});
+    }
+
+    if(method==='GET' && pathname==='/api/auth/google/start'){
+      if(!googleLoginEnabled()) return send(res,400,{detail:'Google Login is not configured. Set GOOGLE_LOGIN_ENABLED=true, GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in data/production.env'});
+      const role = String(url.searchParams.get('role') || 'PASSENGER').toUpperCase();
+      if(role !== 'PASSENGER') return send(res,400,{detail:'Google Login is available for passengers only. Driver login uses mobile OTP/KYC.'});
+      const appReturnParam = String(url.searchParams.get('app') || url.searchParams.get('return_app') || '').toLowerCase();
+      const nativeUa = /NEXO-Ride-Android/i.test(String(req.headers['user-agent']||''));
+      const returnApp = nativeUa || ['1','true','yes','apk','app'].includes(appReturnParam);
+      const state = makeGoogleState('PASSENGER',{return_app:returnApp, source:returnApp?'android_apk':'web'});
+      const redirectUri = googleCallbackUrl(req);
+      const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams({
+        client_id: googleClientId(),
+        redirect_uri: redirectUri,
+        response_type:'code',
+        scope:'openid email profile',
+        access_type:'offline',
+        prompt:'select_account',
+        state
+      }).toString();
+      res.writeHead(302,{Location:authUrl,'Cache-Control':'no-store'});
+      return res.end();
+    }
+
+    if(method==='GET' && pathname==='/api/auth/google/callback'){
+      const code = String(url.searchParams.get('code') || '');
+      const err = String(url.searchParams.get('error') || '');
+      const state = verifyGoogleState(url.searchParams.get('state') || '');
+      const appRedirect = '/app/';
+      const deepAppRedirect = 'nexoride://auth/google';
+      function googleReturnLocation(params){
+        const q=new URLSearchParams(params).toString();
+        if(state && state.return_app) return `${deepAppRedirect}?${q}`;
+        return `${appRedirect}?${q}`;
+      }
+      if(err){ res.writeHead(302,{Location:googleReturnLocation({google_error:err}),'Cache-Control':'no-store'}); return res.end(); }
+      if(!googleLoginEnabled() || !code || !state){ res.writeHead(302,{Location:`${appRedirect}?google_error=${encodeURIComponent('Google login configuration/state invalid')}`,'Cache-Control':'no-store'}); return res.end(); }
+      try{
+        const redirectUri = googleCallbackUrl(req);
+        const tokenResp = await httpPostFormJson('https://oauth2.googleapis.com/token',{code, client_id:googleClientId(), client_secret:googleClientSecret(), redirect_uri:redirectUri, grant_type:'authorization_code'});
+        const tok = tokenResp.json || {};
+        if(!tok.access_token) throw new Error(tok.error_description || tok.error || 'Google token exchange failed');
+        const infoResp = await httpGetJsonWithHeaders('https://www.googleapis.com/oauth2/v3/userinfo',{Authorization:'Bearer '+tok.access_token});
+        const info = infoResp.json || {};
+        if(!info.sub || !info.email) throw new Error('Google profile email not available');
+        if(info.email_verified === false) throw new Error('Google email is not verified');
+        let user = (db.users||[]).find(u=>String(u.google_id||'')===String(info.sub)) || findUser(db, info.email);
+        if(user && String(user.role||'PASSENGER').toUpperCase() !== 'PASSENGER') throw new Error('This email is already used for non-passenger account. Use mobile login.');
+        if(!user){
+          const s=salt();
+          user = {id:uid('usr'), name:String(info.name||info.given_name||'Passenger').trim(), mobile:'', email:String(info.email||'').toLowerCase(), role:'PASSENGER', nexo_id:'', area:'Kalna', status:'ACTIVE', created_at:now(), last_login_at:null, consent_at:now(), consent_version:'v1-google', password_salt:s, password_hash:hashPassword(crypto.randomBytes(18).toString('hex'),s)};
+          db.users.push(user);
+        }
+        user.google_id = String(info.sub);
+        user.google_email_verified = true;
+        user.google_photo = String(info.picture||user.google_photo||'');
+        user.auth_provider = user.auth_provider || 'GOOGLE';
+        user.name = user.name || String(info.name||'Passenger');
+        user.email = user.email || String(info.email||'').toLowerCase();
+        user.last_login_at = now();
+        const sess = makeSession(db,user);
+        audit(db,user.id,'GOOGLE_LOGIN','user',user.id,{email:user.email});
+        saveDb(db);
+        res.writeHead(302,{Location:googleReturnLocation({google_token:sess.token, google_login:'ok'}),'Cache-Control':'no-store'});
+        return res.end();
+      }catch(e){
+        audit(db,'system','GOOGLE_LOGIN_FAILED','auth','google',{error:e.message});
+        saveDb(db);
+        res.writeHead(302,{Location:googleReturnLocation({google_error:e.message}),'Cache-Control':'no-store'});
+        return res.end();
+      }
+    }
+
+    if(method==='POST' && pathname==='/api/auth/google/fake-login-dev'){
+      return send(res,403,{detail:'Disabled. Use Google OAuth redirect flow.'});
     }
 
     if(method==='POST' && pathname==='/api/auth/request-otp'){
@@ -1946,13 +2384,23 @@ async function route(req,res){
       if(recentForMobile.length >= Number(authSet.max_otp_per_mobile_per_hour||5)) return send(res,429,{detail:'Too many OTP requests. Please try later.'});
       const latest = [...(db.otp_requests||[])].reverse().find(x=>x.mobile===mobile && new Date(x.created_at).getTime() > Date.now() - Number(authSet.resend_cooldown_seconds||0)*1000);
       if(latest) return send(res,429,{detail:`Please wait ${authSet.resend_cooldown_seconds} seconds before requesting another OTP`});
-      const code = provider === 'DEMO' ? String(authSet.demo_otp || i.otp.demo_code || '123456') : String(Math.floor(100000 + Math.random()*900000));
-      const reqItem = {id:uid('otp'), mobile, code_hash:sha(code), provider, purpose:String(body.purpose||'LOGIN'), created_at:now(), expires_at:new Date(Date.now()+Number(authSet.otp_expiry_minutes||5)*60*1000).toISOString(), verified:false};
+      const purpose = String(body.purpose||'LOGIN');
+      let code = provider === 'DEMO' ? String(authSet.demo_otp || i.otp.demo_code || '123456') : '';
+      const reqItem = {id:uid('otp'), mobile, code_hash:provider==='DEMO'?sha(code):'', provider, purpose, created_at:now(), expires_at:new Date(Date.now()+Number(authSet.otp_expiry_minutes||5)*60*1000).toISOString(), verified:false};
+      try{
+        const gateway = await sendOtpViaGateway(provider, mobile, purpose);
+        if(gateway){ reqItem.gateway='2FACTOR'; reqItem.gateway_session_id = gateway.session_id; reqItem.gateway_phone = gateway.phone; }
+        else if(provider !== 'DEMO') return send(res,400,{detail:`OTP provider ${provider} is not configured for live sending yet. Use TWOFACTOR or DEMO.`});
+      }catch(e){
+        audit(db,'system','OTP_SEND_FAILED','mobile',mobile,{provider, error:e.message});
+        saveDb(db);
+        return send(res,502,{detail:'OTP gateway failed', provider, error:e.message});
+      }
       db.otp_requests.push(reqItem);
       if(db.otp_requests.length > 500) db.otp_requests = db.otp_requests.slice(-500);
-      audit(db,'system','OTP_REQUEST','mobile',mobile,{provider, purpose:reqItem.purpose});
+      audit(db,'system','OTP_REQUEST','mobile',mobile,{provider, purpose:reqItem.purpose, gateway:reqItem.gateway||''});
       saveDb(db);
-      return send(res,200,{ok:true, provider, expires_at:reqItem.expires_at, demo_code:provider==='DEMO'?code:undefined, note:provider==='DEMO'?'Testing OTP only. Production SMS not sent.':'Production SMS provider scaffold ready; gateway key/webhook required.'});
+      return send(res,200,{ok:true, provider, expires_at:reqItem.expires_at, demo_code:provider==='DEMO'?code:undefined, message:provider==='DEMO'?'Testing OTP generated.':'OTP sent to mobile.'});
     }
 
     if(method==='POST' && pathname==='/api/auth/login-otp'){
@@ -1961,7 +2409,10 @@ async function route(req,res){
       const otp = String(body.otp||'').trim();
       if(!mobile || !otp) return send(res,400,{detail:'Mobile and OTP required'});
       const reqItem = [...(db.otp_requests||[])].reverse().find(x=>x.mobile===mobile && !x.verified && new Date(x.expires_at)>new Date());
-      if(!reqItem || reqItem.code_hash !== sha(otp)) return send(res,401,{detail:'Invalid or expired OTP'});
+      let otpOk = false;
+      try{ otpOk = !!reqItem && await verifyOtpViaGateway(reqItem, otp); }
+      catch(e){ return send(res,502,{detail:'OTP verification gateway failed', error:e.message}); }
+      if(!otpOk) return send(res,401,{detail:'Invalid or expired OTP'});
       reqItem.verified = true; reqItem.verified_at = now();
       let user = findUser(db,mobile);
       if(!user){
@@ -2025,6 +2476,74 @@ async function route(req,res){
       return send(res,200,{ok:true, token:sess.token, expires_at:sess.expires_at, user:safeUser(user)});
     }
 
+    if(method==='POST' && pathname==='/api/auth/forgot-password'){
+      const body = await getBody(req);
+      const login = String(body.login||'').trim();
+      if(!login) return send(res,400,{detail:'Mobile / Email / NEXO ID required'});
+      const user = findUser(db, login);
+      if(!user || String(user.status||'ACTIVE').toUpperCase()==='SUSPENDED') return send(res,404,{detail:'Account not found. Please check mobile number or contact admin.'});
+      const mobile = String(user.mobile||'').trim();
+      if(!mobile) return send(res,400,{detail:'No mobile number linked with this account. Contact admin.'});
+      const authSet = authSettings(db);
+      const i = mergeIntegrations(db.integrations);
+      const provider = String(authSet.otp_provider || i.otp.provider || 'DEMO').toUpperCase();
+      const recentForMobile = (db.otp_requests||[]).filter(x=>x.mobile===mobile && String(x.purpose||'')==='RESET_PASSWORD' && new Date(x.created_at).getTime() > Date.now()-60*60*1000);
+      if(recentForMobile.length >= Number(authSet.max_otp_per_mobile_per_hour||5)) return send(res,429,{detail:'Too many reset OTP requests. Please try later.'});
+      const latest = [...(db.otp_requests||[])].reverse().find(x=>x.mobile===mobile && String(x.purpose||'')==='RESET_PASSWORD' && new Date(x.created_at).getTime() > Date.now() - Number(authSet.resend_cooldown_seconds||0)*1000);
+      if(latest) return send(res,429,{detail:`Please wait ${authSet.resend_cooldown_seconds} seconds before requesting another OTP`});
+      let code = provider === 'DEMO' ? String(authSet.demo_otp || i.otp.demo_code || '123456') : '';
+      const reqItem = {id:uid('rst'), user_id:user.id, mobile, code_hash:provider==='DEMO'?sha(code):'', provider, purpose:'RESET_PASSWORD', created_at:now(), expires_at:new Date(Date.now()+Number(authSet.otp_expiry_minutes||5)*60*1000).toISOString(), verified:false};
+      try{
+        const gateway = await sendOtpViaGateway(provider, mobile, 'RESET_PASSWORD');
+        if(gateway){ reqItem.gateway='2FACTOR'; reqItem.gateway_session_id = gateway.session_id; reqItem.gateway_phone = gateway.phone; }
+        else if(provider !== 'DEMO') return send(res,400,{detail:`OTP provider ${provider} is not configured for live sending yet. Use TWOFACTOR or DEMO.`});
+      }catch(e){
+        audit(db,user.id,'PASSWORD_RESET_OTP_FAILED','user',user.id,{provider,error:e.message});
+        saveDb(db);
+        return send(res,502,{detail:'OTP gateway failed', provider, error:e.message});
+      }
+      db.otp_requests.push(reqItem);
+      db.password_reset_requests = db.password_reset_requests || [];
+      db.password_reset_requests.push({id:reqItem.id,user_id:user.id,mobile,provider,status:'OTP_SENT',created_at:reqItem.created_at,expires_at:reqItem.expires_at});
+      if(db.otp_requests.length > 500) db.otp_requests = db.otp_requests.slice(-500);
+      if(db.password_reset_requests.length > 300) db.password_reset_requests = db.password_reset_requests.slice(-300);
+      audit(db,user.id,'PASSWORD_RESET_OTP','user',user.id,{provider});
+      saveDb(db);
+      return send(res,200,{ok:true, message:'Password reset OTP sent', mobile_mask:maskMobile(mobile), expires_at:reqItem.expires_at, provider, demo_code:provider==='DEMO'?code:undefined, note:provider==='DEMO'?'Testing OTP only. Production SMS provider not configured yet.':'OTP sent through configured provider.'});
+    }
+
+    if(method==='POST' && pathname==='/api/auth/reset-password'){
+      const body = await getBody(req);
+      const login = String(body.login||'').trim();
+      const otp = String(body.otp||'').trim();
+      const newPassword = String(body.new_password||'');
+      if(!login || !otp || !newPassword) return send(res,400,{detail:'Login, OTP and new password required'});
+      if(newPassword.length < 6) return send(res,400,{detail:'New password must be at least 6 characters'});
+      const user = findUser(db, login);
+      if(!user) return send(res,404,{detail:'Account not found'});
+      const mobile = String(user.mobile||'').trim();
+      const reqItem = [...(db.otp_requests||[])].reverse().find(x=>x.mobile===mobile && x.user_id===user.id && String(x.purpose||'')==='RESET_PASSWORD' && !x.verified && new Date(x.expires_at)>new Date());
+      let otpOk = false;
+      try{ otpOk = !!reqItem && await verifyOtpViaGateway(reqItem, otp); }
+      catch(e){ return send(res,502,{detail:'OTP verification gateway failed', error:e.message}); }
+      if(!otpOk) return send(res,401,{detail:'Invalid or expired reset OTP'});
+      reqItem.verified = true;
+      reqItem.verified_at = now();
+      const s = salt();
+      user.password_salt = s;
+      user.password_hash = hashPassword(newPassword,s);
+      user.must_change_password = false;
+      user.password_changed_at = now();
+      // For safety, logout this user from old sessions after password reset.
+      db.sessions = (db.sessions||[]).filter(sess=>sess.user_id!==user.id);
+      db.password_reset_requests = db.password_reset_requests || [];
+      const log = [...db.password_reset_requests].reverse().find(x=>x.id===reqItem.id);
+      if(log){ log.status='PASSWORD_RESET_DONE'; log.completed_at=now(); }
+      audit(db,user.id,'PASSWORD_RESET_DONE','user',user.id,{via:'OTP'});
+      saveDb(db);
+      return send(res,200,{ok:true, message:'Password reset successful. Please login with new password.'});
+    }
+
     if(method==='GET' && pathname==='/api/me'){
       const user = requireUser(req,res,db); if(!user) return;
       // 30-day rolling session: every app open extends the current login session.
@@ -2033,8 +2552,35 @@ async function route(req,res){
       const sess = db.sessions.find(s=>s.token===reqToken && s.user_id===user.id);
       if(sess){ const sessionDays = Number((db.auth_settings||{}).session_days || SESSION_DAYS); sess.expires_at = new Date(Date.now()+sessionDays*24*60*60*1000).toISOString(); user.last_seen_at = now(); }
       const driver_profile = db.driver_profiles.find(d=>d.user_id===user.id) || null;
+      const gps_health = driver_profile ? driverGpsHealth(db, driver_profile) : null;
       saveDb(db);
-      return send(res,200,{ok:true, user:safeUser(user), driver_profile, session_expires_at:sess?.expires_at});
+      return send(res,200,{ok:true, user:safeUser(user), driver_profile, gps_health, session_expires_at:sess?.expires_at});
+    }
+
+
+    if(method==='POST' && pathname==='/api/me'){
+      const user = requireUser(req,res,db); if(!user) return;
+      const body = await getBody(req);
+      const name = String(body.name||'').trim();
+      const email = String(body.email||'').trim();
+      const mobile = String(body.mobile||'').trim();
+      const area = String(body.area||'').trim();
+      if(name) user.name = name.slice(0,120);
+      if(email){
+        const exists = db.users.find(u=>u.id!==user.id && String(u.email||'').toLowerCase()===email.toLowerCase());
+        if(exists) return send(res,409,{detail:'This email is already used by another account'});
+        user.email = email.slice(0,160);
+      } else if(body.email !== undefined){ user.email=''; }
+      if(mobile && mobile !== user.mobile){
+        const exists = db.users.find(u=>u.id!==user.id && String(u.mobile||'')===mobile);
+        if(exists) return send(res,409,{detail:'This mobile number is already used by another account'});
+        user.mobile = mobile.slice(0,20);
+      }
+      if(area) user.area = area.slice(0,120);
+      user.updated_at = now();
+      audit(db,user.id,'PROFILE_UPDATE','user',user.id,{role:user.role});
+      saveDb(db);
+      return send(res,200,{ok:true, user:safeUser(user), driver_profile:db.driver_profiles.find(d=>d.user_id===user.id)||null});
     }
 
     if(method==='POST' && pathname==='/api/auth/change-password'){
@@ -2119,32 +2665,94 @@ async function route(req,res){
       prof.area=String(body.area||prof.area||user.area||'Kalna');
       prof.location=String(body.location||prof.location||prof.area||'Kalna');
       const k = driverKycSummary(db,prof);
+      if(prof.status==='REJECTED') prof.status='PENDING';
       prof.kyc_status = k.docs_present > 0 ? 'SUBMITTED' : 'INCOMPLETE';
       prof.kyc_submitted_at = now();
-      prof.kyc_last_message = k.complete ? 'All required KYC documents submitted. Waiting for Admin review.' : `KYC submitted, but ${k.docs_required-k.docs_present} item(s) still missing: ${k.missing.join(', ')}`;
-      if(prof.status==='REJECTED') prof.status='PENDING';
+      const auto = autoApproveDriverKycIfEligible(db, prof, user, body);
+      if(auto.auto_approved){
+        prof.kyc_last_message = 'KYC complete এবং GPS service area-এর ভিতরে আছে। Driver auto approved. এখন Go Online করতে পারবেন।';
+      }else{
+        prof.kyc_last_message = k.complete ? `KYC complete. Auto approval pending: ${auto.reason}. GPS allow করে service area-এর ভিতর থেকে আবার Submit/Go Online করুন।` : `KYC submitted, but ${k.docs_required-k.docs_present} item(s) still missing: ${k.missing.join(', ')}`;
+      }
       db.kyc_submissions = db.kyc_submissions || [];
-      const submission = {id:uid('kycsub'), profile_id:prof.id, driver_user_id:user.id, driver_name:user.name||'', mobile:user.mobile||'', area:prof.area, status:prof.kyc_status, review_status:k.complete?'UNDER_ADMIN_REVIEW':'SUBMITTED_BUT_INCOMPLETE', docs_present:k.docs_present, docs_required:k.docs_required, missing:k.missing, uploaded_files:(k.uploaded_files||[]).map(f=>({id:f.id, doc_type:f.doc_type, url:f.url, mime_type:f.mime_type, size_bytes:f.size_bytes})), message:prof.kyc_last_message, submitted_at:prof.kyc_submitted_at};
+      const finalSummary = driverKycSummary(db,prof);
+      const submission = {id:uid('kycsub'), profile_id:prof.id, driver_user_id:user.id, driver_name:user.name||'', mobile:user.mobile||'', area:prof.area, status:prof.kyc_status, review_status:auto.auto_approved?'AUTO_APPROVED':(k.complete?'AUTO_APPROVAL_PENDING':'SUBMITTED_BUT_INCOMPLETE'), auto_approved:!!auto.auto_approved, auto_approval_reason:auto.reason||'', coords:auto.coords||coordsFromRequestOrProfile(body,prof), docs_present:finalSummary.docs_present, docs_required:finalSummary.docs_required, missing:finalSummary.missing, uploaded_files:(finalSummary.uploaded_files||[]).map(f=>({id:f.id, doc_type:f.doc_type, url:f.url, mime_type:f.mime_type, size_bytes:f.size_bytes})), message:prof.kyc_last_message, submitted_at:prof.kyc_submitted_at};
       db.kyc_submissions.push(submission);
-      notifyAdmins(db,{event_type:'DRIVER_KYC_SUBMITTED', priority:k.complete?'HIGH':'NORMAL', title:'Driver KYC Submitted', message:`${user.name||'Driver'} submitted KYC documents · ${k.docs_present}/${k.docs_required}`, area:prof.area, data:{driver_profile_id:prof.id, submission_id:submission.id}});
-      audit(db,user.id,'DRIVER_KYC_SUBMIT','driver_profile',prof.id,{docs_present:k.docs_present, docs_required:k.docs_required, missing:k.missing});
+      notifyAdmins(db,{event_type:auto.auto_approved?'DRIVER_KYC_AUTO_APPROVED':'DRIVER_KYC_SUBMITTED', priority:auto.auto_approved?'NORMAL':(k.complete?'HIGH':'NORMAL'), title:auto.auto_approved?'Driver KYC Auto Approved':'Driver KYC Submitted', message:auto.auto_approved?`${user.name||'Driver'} auto approved · service area GPS OK`:`${user.name||'Driver'} submitted KYC documents · ${k.docs_present}/${k.docs_required}`, area:prof.area, data:{driver_profile_id:prof.id, submission_id:submission.id}});
+      audit(db,user.id,auto.auto_approved?'DRIVER_KYC_AUTO_APPROVED':'DRIVER_KYC_SUBMIT','driver_profile',prof.id,{docs_present:finalSummary.docs_present, docs_required:finalSummary.docs_required, missing:finalSummary.missing, auto});
       saveDb(db);
-      return send(res,200,{ok:true, message:prof.kyc_last_message, kyc:driverKycSummary(db,prof), submission});
+      return send(res,200,{ok:true, message:prof.kyc_last_message, kyc:driverKycSummary(db,prof), submission, auto_approval:auto});
     }
 
-    if(method==='POST' && pathname==='/api/driver/online'){
+    if(method==='GET' && pathname==='/api/driver/status'){
+      const user = requireUser(req,res,db); if(!user) return;
+      const prof = db.driver_profiles.find(d=>d.user_id===user.id);
+      if(!prof) return send(res,404,{detail:'Driver profile not found'});
+      return send(res,200,{ok:true, driver_profile:prof, online_eligible:driverOnlineEligibility(prof), gps_health:driverGpsHealth(db,prof)});
+    }
+
+
+
+    // Sprint-6F: Check GPS can run while driver is offline. It stores the real GPS,
+    // resolves nearest local area name, and returns a running/inside status for UI.
+    if(method==='POST' && pathname==='/api/driver/check-gps'){
+      const user = requireUser(req,res,db); if(!user) return;
+      if(user.role !== 'DRIVER') return send(res,403,{detail:'Driver account required'});
+      const body = await parseBody(req);
+      const prof = db.driver_profiles.find(d=>d.user_id===user.id);
+      if(!prof) return send(res,404,{detail:'Driver profile required'});
+      const lat = Number(body.lat ?? body.latitude);
+      const lng = Number(body.lng ?? body.longitude);
+      if(!Number.isFinite(lat) || !Number.isFinite(lng)) return send(res,400,{detail:'Real GPS location required. Please allow Location permission.'});
+      const coords = {lat:Math.round(lat*1000000)/1000000,lng:Math.round(lng*1000000)/1000000};
+      const nearby = nearbyPlaces(db, coords.lat, coords.lng, 8);
+      const inside = isInsideServiceArea(db, coords);
+      const nearest = nearby[0] || null;
+      const locationName = String(nearest?.name || (inside ? (db.service_area?.name || 'Kalna Sub-Division') : 'Outside Service Area'));
+      prof.lat = coords.lat; prof.lng = coords.lng;
+      prof.last_location_at = now();
+      prof.gps_status = inside ? 'RUNNING' : 'OUTSIDE_SERVICE_AREA';
+      prof.gps_running = !!inside;
+      prof.gps_last_accuracy = Number(body.accuracy || 0);
+      prof.location = locationName;
+      prof.area = locationName;
+      const loc = upsertLocation(db,user,{lat:coords.lat,lng:coords.lng,accuracy:body.accuracy,source:'DRIVER_GPS_CHECK',location:locationName,online:prof.online});
+      const health = {...driverGpsHealth(db,prof), running:!!inside, status:inside?'RUNNING':'OUTSIDE_SERVICE_AREA', location_name:locationName, nearest, status_text: inside ? `GPS Running · ${locationName}` : `GPS Outside Service Area · ${locationName}`};
+      audit(db,user.id,'DRIVER_CHECK_GPS','driver_profile',prof.id,{coords,inside,location_name:locationName});
+      saveDb(db);
+      return send(res,200,{ok:true, driver_profile:prof, location:loc, gps_health:health, nearest, inside_service_area:inside});
+    }
+
+    if(method==='POST' && (pathname==='/api/driver/online' || pathname==='/api/driver/go-online' || pathname==='/api/driver/go-offline' || pathname==='/api/driver/location-update')){
       const user = requireUser(req,res,db); if(!user) return;
       const body = await getBody(req);
       let prof = db.driver_profiles.find(d=>d.user_id===user.id);
       if(!prof) return send(res,400,{detail:'Driver profile required'});
-      if(body.online && prof.status!=='APPROVED') return send(res,403,{detail:'Admin approval required before going online'});
-      prof.online = !!body.online;
+      const wantsOnline = pathname==='/api/driver/go-online' ? true : pathname==='/api/driver/go-offline' ? false : pathname==='/api/driver/location-update' ? !!prof.online : !!body.online;
+      if(wantsOnline || pathname==='/api/driver/location-update'){
+        if(wantsOnline) autoApproveDriverKycIfEligible(db, prof, user, body);
+        const elig = driverOnlineEligibility(prof);
+        if(!elig.ok) return send(res,403,{detail:elig.detail, online_eligible:elig, kyc_status:prof.kyc_status, status:prof.status, auto_approval_hint:'Complete KYC + allow GPS inside service area for automatic approval'});
+        const onlineCoords = coordsFromRequestOrProfile(body, prof);
+        if(!onlineCoords) return send(res,400,{detail:'GPS location required before Go Online. Press Check GPS and allow location permission.'});
+        if(!isInsideServiceArea(db, onlineCoords)) return send(res,403,{detail:'আপনি service area-এর বাইরে আছেন। লোকাল area-এর ভিতরে এসে Go Online করুন।', gps_health:driverGpsHealth(db,{...prof, lat:onlineCoords.lat, lng:onlineCoords.lng})});
+        const nearForOnline = nearbyPlaces(db, onlineCoords.lat, onlineCoords.lng, 1)[0];
+        if(nearForOnline?.name && (!body.location || body.location==='Kalna')) body.location = nearForOnline.name;
+        if(pathname==='/api/driver/location-update' && !prof.online) return send(res,409,{detail:'Driver is offline. Go Online first.'});
+      }
+      prof.online = !!wantsOnline;
       prof.location = String(body.location||prof.location||'Kalna');
+      if(prof.online && !prof.online_since) prof.online_since = now();
+      if(!prof.online){ prof.online_since = null; prof.offline_at = now(); }
       prof.last_online_at = now();
-      const loc = upsertLocation(db,user,{...body, online:prof.online, location:prof.location, source:'DRIVER_ONLINE'});
+      prof.last_seen_at = now();
+      const src = pathname==='/api/driver/location-update' ? (body.source||'DRIVER_LOCATION_HEARTBEAT') : (prof.online?'DRIVER_GO_ONLINE':'DRIVER_GO_OFFLINE');
+      const loc = upsertLocation(db,user,{...body, online:prof.online, location:prof.location, source:src});
       if(loc){ prof.lat = loc.lat; prof.lng = loc.lng; prof.last_location_at = loc.updated_at; }
+      notifyAdmins(db,{event_type:prof.online?'DRIVER_ONLINE':'DRIVER_OFFLINE', priority:'NORMAL', title:prof.online?'Driver Online':'Driver Offline', message:`${user.name||'Driver'} is ${prof.online?'online':'offline'} · ${prof.location}`, area:prof.area||prof.location||'Kalna', data:{driver_profile_id:prof.id, lat:prof.lat, lng:prof.lng}});
+      audit(db,user.id,prof.online?'DRIVER_GO_ONLINE':'DRIVER_GO_OFFLINE','driver_profile',prof.id,{lat:prof.lat,lng:prof.lng,source:src});
       saveDb(db);
-      return send(res,200,{ok:true,driver_profile:prof, location:loc});
+      return send(res,200,{ok:true,driver_profile:prof, location:loc, online_eligible:driverOnlineEligibility(prof), gps_health:driverGpsHealth(db,prof)});
     }
 
     if(method==='POST' && pathname==='/api/fare/estimate'){
@@ -2171,8 +2779,26 @@ async function route(req,res){
         ride.status='PAYMENT_TIMEOUT'; ride.payment_status='EXPIRED'; ride.expired_at=now(); saveDb(db);
         return send(res,409,{detail:'Payment time expired. Please book again.'});
       }
-      const order = createPaymentOrder(db, ride, user, 'PASSENGER_APP');
-      audit(db,user.id,'PAYMENT_ORDER_CREATE','payment_order',order.id,{ride_id:ride.id, amount:order.amount, provider:order.provider});
+      const payOpts = paymentOptions(db);
+      let order = (db.payment_orders||[]).find(o=>o.ride_id===ride.id && ['CREATED','PENDING'].includes(o.status));
+      if(!order){
+        order = createPaymentOrder(db, ride, user, 'PASSENGER_APP');
+        if(payOpts.provider === 'RAZORPAY' && payOpts.razorpay_enabled){
+          try{
+            const rp = await createRazorpayGatewayOrder(ride,user);
+            order.razorpay_order_id = rp.id || order.razorpay_order_id;
+            order.razorpay_amount = rp.amount || Math.round(Number(order.amount||0)*100);
+            order.razorpay_currency = rp.currency || payOpts.currency || 'INR';
+            order.razorpay_status = rp.status || 'created';
+            order.status = 'CREATED';
+            order.note = 'Razorpay order created. Verify signature before confirming ride.';
+          }catch(e){
+            order.status='FAILED'; order.error=e.message; saveDb(db);
+            return send(res,502,{detail:'Razorpay order create failed: '+e.message});
+          }
+        }
+      }
+      audit(db,user.id,'PAYMENT_ORDER_CREATE','payment_order',order.id,{ride_id:ride.id, amount:order.amount, provider:order.provider, razorpay_order_id:order.razorpay_order_id||''});
       saveDb(db);
       return send(res,200,{ok:true, order, payment:paymentOptions(db), ride:rideDto(ride,db,user)});
     }
@@ -2186,12 +2812,24 @@ async function route(req,res){
       if(!ride) return send(res,404,{detail:'Linked ride not found'});
       if(ride.passenger_id!==user.id && !isAdminRole(user)) return send(res,403,{detail:'Only passenger/admin can verify this payment'});
       const body = await getBody(req);
-      const txn = String(body.transaction_id || body.razorpay_payment_id || body.payment_ref || '').trim();
       const provider = String(order.provider || paymentProviderMode(db)).toUpperCase();
-      const demoAllowed = provider === 'DEMO';
-      if(!demoAllowed && !txn) return send(res,400,{detail:'Payment transaction/reference required'});
+      let txn = String(body.transaction_id || body.razorpay_payment_id || body.payment_ref || '').trim();
       try{
-        order.status='PAID'; order.transaction_id = txn || ('DEMO-' + Date.now()); order.payment_method=String(body.payment_method||order.payment_method||'DEMO_PAYMENT'); order.paid_at=now(); order.verified_at=now(); order.verified_by=user.id;
+        if(provider === 'RAZORPAY'){
+          const rpOrderId = String(body.razorpay_order_id || order.razorpay_order_id || '').trim();
+          const rpPaymentId = String(body.razorpay_payment_id || '').trim();
+          const rpSignature = String(body.razorpay_signature || '').trim();
+          if(!rpOrderId || !rpPaymentId || !rpSignature) return send(res,400,{detail:'Razorpay payment_id/order_id/signature required'});
+          if(order.razorpay_order_id && rpOrderId !== order.razorpay_order_id) return send(res,400,{detail:'Razorpay order mismatch'});
+          if(!verifyRazorpayPaymentSignature(rpOrderId, rpPaymentId, rpSignature)) return send(res,400,{detail:'Razorpay signature verification failed'});
+          txn = rpPaymentId;
+          order.razorpay_order_id = rpOrderId;
+          order.razorpay_payment_id = rpPaymentId;
+          order.razorpay_signature_verified = true;
+        }else if(provider !== 'DEMO' && !txn){
+          return send(res,400,{detail:'Payment transaction/reference required'});
+        }
+        order.status='PAID'; order.transaction_id = txn || ('DEMO-' + Date.now()); order.payment_method=String(body.payment_method||order.payment_method||(provider==='RAZORPAY'?'RAZORPAY_CHECKOUT':'DEMO_PAYMENT')); order.paid_at=now(); order.verified_at=now(); order.verified_by=user.id;
         confirmRidePayment(db, ride, user, {provider, transaction_id:order.transaction_id, payment_method:order.payment_method});
       }catch(e){ saveDb(db); return send(res,409,{detail:e.message}); }
       saveDb(db);
@@ -2210,19 +2848,23 @@ async function route(req,res){
       const pickup_coords = fare.pickup_coords || placeCoords(pickup);
       const drop_coords = fare.drop_coords || placeCoords(drop);
       const passenger_loc = upsertLocation(db,user,{lat:body.lat,lng:body.lng,accuracy:body.accuracy,location:pickup,source:'PASSENGER_BOOKING'}) || {lat:pickup_coords.lat,lng:pickup_coords.lng};
-      const drivers = activeDrivers(db).map(d=>({ ...d, distance_to_pickup_km: distanceKm({lat:d.lat||placeCoords(d.location).lat,lng:d.lng||placeCoords(d.location).lng}, pickup_coords) })).sort((a,b)=>(a.distance_to_pickup_km||99)-(b.distance_to_pickup_km||99));
+      const drivers = nearestAvailableDrivers(db, pickup_coords, {max_radius_km: body.max_radius_km, max_drivers: body.max_drivers});
+      const driverUsers = drivers.map(d=>db.users.find(u=>u.id===d.user_id)).filter(Boolean);
       const ride = {
         id:uid('ride'), passenger_id:user.id, driver_id:null, status:'REQUESTED',
         pickup, drop, pickup_coords, drop_coords, passenger_location:passenger_loc, ride_type, ...fare, nearby_driver_count:drivers.length,
+        driver_candidate_ids: drivers.map(d=>d.user_id), driver_candidate_profile_ids: drivers.map(d=>d.id), rejected_driver_ids: [], match_radius_km: Number(body.max_radius_km || db.service_area?.driver_matching_radius_km || process.env.DRIVER_MATCH_RADIUS_KM || 8), matching_status: drivers.length ? 'DRIVER_REQUEST_SENT' : 'NO_ONLINE_DRIVER',
         created_at:now(), accepted_at:null, payment_due_at:null, payment_hold_seconds:PAYMENT_HOLD_SECONDS, paid_at:null, confirmed_at:null, arrived_at:null, started_at:null, completed_at:null, cancelled_at:null, expired_at:null, payment_status:'PENDING', ride_otp:null, otp_verified_at:null
       };
       db.rides.push(ride);
-      const driverUsers = drivers.map(d=>db.users.find(u=>u.id===d.user_id)).filter(Boolean);
-      notifyUsers(db, driverUsers, {event_type:'RIDE_REQUEST', priority:'HIGH', ride_id:ride.id, title:'New Toto Request', message:`${pickup} → ${drop} · ₹${fare.estimated_fare}`, area:user.area||'Kalna'});
-      notifyAdmins(db,{event_type:'RIDE_REQUEST_ADMIN', priority:'NORMAL', ride_id:ride.id, title:'New Booking Requested', message:`${pickup} → ${drop} · ${ride_type} · ₹${fare.estimated_fare}`, area:user.area||'Kalna'});
-      audit(db,user.id,'RIDE_REQUEST','ride',ride.id,{pickup,drop,ride_type});
+      if(driverUsers.length){
+        notifyUsers(db, driverUsers, {event_type:'RIDE_REQUEST', priority:'HIGH', ride_id:ride.id, title:'New Toto Request', message:`${pickup} → ${drop} · ₹${fare.estimated_fare}`, area:user.area||'Kalna', data:{candidate_count:driverUsers.length, pickup, drop, fare:fare.estimated_fare}});
+      }
+      notifyUsers(db, notificationTargets(db,{user_id:user.id}), {event_type:'RIDE_SEARCHING', priority:'NORMAL', ride_id:ride.id, title:drivers.length?'Driver Request Sent':'No Online Driver', message:drivers.length?`${drivers.length} nearby driver-কে request পাঠানো হয়েছে।`:'এখন কাছাকাছি online driver নেই। একটু পরে আবার চেষ্টা করুন।'});
+      notifyAdmins(db,{event_type:'RIDE_REQUEST_ADMIN', priority:'NORMAL', ride_id:ride.id, title:'New Booking Requested', message:`${pickup} → ${drop} · ${ride_type} · ₹${fare.estimated_fare} · candidates ${drivers.length}`, area:user.area||'Kalna'});
+      audit(db,user.id,'RIDE_REQUEST_MATCHING','ride',ride.id,{pickup,drop,ride_type,candidates:drivers.map(d=>({user_id:d.user_id,km:d.distance_to_pickup_km}))});
       saveDb(db);
-      return send(res,200,{ok:true, ride:rideDto(ride,db,user), nearby_drivers:drivers.map(d=>({id:d.id, location:d.location, lat:d.lat, lng:d.lng, distance_to_pickup_km:d.distance_to_pickup_km, rating:d.rating, total_rides:d.total_rides}))});
+      return send(res,200,{ok:true, ride:rideDto(ride,db,user), matching:{status:ride.matching_status, candidate_count:drivers.length, radius_km:ride.match_radius_km}, nearby_drivers:drivers.map(d=>({id:d.id, user_id:d.user_id, location:d.location, lat:d.lat, lng:d.lng, distance_to_pickup_km:d.distance_to_pickup_km, rating:d.rating, total_rides:d.total_rides}))});
     }
 
     if(method==='GET' && pathname==='/api/rides'){
@@ -2233,26 +2875,62 @@ async function route(req,res){
         rides = filterRidesForAdmin(db,user,db.rides).slice(-100).reverse();
       } else if(String(role).toUpperCase()==='DRIVER'){
         const prof = db.driver_profiles.find(d=>d.user_id===user.id);
-        rides = db.rides.filter(r=>r.driver_id===user.id || (!r.driver_id && r.status==='REQUESTED')).slice(-50).reverse();
+        rides = db.rides.filter(r=>{
+          if(r.driver_id===user.id) return true;
+          if(r.status!=='REQUESTED' || r.driver_id) return false;
+          if(Array.isArray(r.rejected_driver_ids) && r.rejected_driver_ids.includes(user.id)) return false;
+          if(Array.isArray(r.driver_candidate_ids) && r.driver_candidate_ids.length) return r.driver_candidate_ids.includes(user.id);
+          return prof && driverOnlineEligibility(prof).ok && prof.online;
+        }).slice(-50).reverse();
       } else {
         rides = db.rides.filter(r=>r.passenger_id===user.id).slice(-50).reverse();
       }
       return send(res,200,{ok:true, rides:rides.map(r=>rideDto(r,db,user))});
     }
 
-    const rideMatch = pathname.match(/^\/api\/rides\/([^/]+)\/(accept|pay|arrive|start|complete|cancel)$/);
+    const liveRideMatch = pathname.match(/^\/api\/rides\/([^/]+)\/live$/);
+    if(method==='GET' && liveRideMatch){
+      const user = requireUser(req,res,db); if(!user) return;
+      const ride = (db.rides||[]).find(r=>r.id===liveRideMatch[1]);
+      if(!ride) return send(res,404,{detail:'Ride not found'});
+      if(!isAdminRole(user) && ride.passenger_id!==user.id && ride.driver_id!==user.id) return send(res,403,{detail:'Only related passenger/driver can view live ride'});
+      const out = rideDto(ride,db,user);
+      const route = routePlan(db, ride.pickup, ride.drop, ride.ride_type, ride.seats||1);
+      return send(res,200,{ok:true, ride:out, route, updated_at:now()});
+    }
+
+    const rideMatch = pathname.match(/^\/api\/rides\/([^/]+)\/(accept|reject|pay|arrive|start|complete|cancel)$/);
     if(method==='POST' && rideMatch){
       const user = requireUser(req,res,db); if(!user) return;
       const ride = db.rides.find(r=>r.id===rideMatch[1]);
       if(!ride) return send(res,404,{detail:'Ride not found'});
       const action = rideMatch[2];
+      if(action==='reject'){
+        const prof = db.driver_profiles.find(d=>d.user_id===user.id);
+        if(!prof) return send(res,403,{detail:'Driver profile required'});
+        if(ride.status!=='REQUESTED') return send(res,409,{detail:'Ride already assigned/closed'});
+        ride.rejected_driver_ids = Array.isArray(ride.rejected_driver_ids) ? ride.rejected_driver_ids : [];
+        if(!ride.rejected_driver_ids.includes(user.id)) ride.rejected_driver_ids.push(user.id);
+        ride.driver_candidate_ids = (ride.driver_candidate_ids||[]).filter(id=>id!==user.id);
+        ride.last_rejected_at = now();
+        ride.matching_status = ride.driver_candidate_ids.length ? 'PARTIALLY_REJECTED' : 'WAITING_FOR_DRIVER';
+        audit(db,user.id,'RIDE_REJECT','ride',ride.id,{remaining_candidates:ride.driver_candidate_ids.length});
+        saveDb(db);
+        return send(res,200,{ok:true, message:'Request rejected', ride:rideDto(ride,db,user)});
+      }
       if(action==='accept'){
         const prof = db.driver_profiles.find(d=>d.user_id===user.id);
         if(!prof) return send(res,403,{detail:'Driver profile required'});
-        if(prof.status!=='APPROVED') return send(res,403,{detail:'Admin approval required before accepting ride'});
+        const elig = driverOnlineEligibility(prof);
+        if(!elig.ok) return send(res,403,{detail:elig.detail});
+        if(!prof.online) return send(res,403,{detail:'Go Online required before accepting ride'});
+        if(Array.isArray(ride.driver_candidate_ids) && ride.driver_candidate_ids.length && !ride.driver_candidate_ids.includes(user.id)) return send(res,403,{detail:'This ride request is not assigned to your driver app'});
         if(ride.status!=='REQUESTED') return send(res,409,{detail:'Ride already taken'});
-        ride.driver_id=user.id; ride.status='DRIVER_ACCEPTED'; ride.accepted_at=now(); ride.payment_due_at = new Date(Date.now()+PAYMENT_HOLD_SECONDS*1000).toISOString(); ride.payment_hold_seconds = PAYMENT_HOLD_SECONDS;
+        ride.driver_id=user.id; ride.status='DRIVER_ACCEPTED'; ride.accepted_at=now(); ride.payment_due_at = new Date(Date.now()+PAYMENT_HOLD_SECONDS*1000).toISOString(); ride.payment_hold_seconds = PAYMENT_HOLD_SECONDS; ride.matching_status='DRIVER_ACCEPTED';
+        const driverUser = db.users.find(u=>u.id===user.id) || {};
+        ride.driver_name = driverUser.name || ''; ride.driver_vehicle_no = prof.vehicle_no || '';
         notifyUsers(db, notificationTargets(db,{user_id:ride.passenger_id}), {event_type:'DRIVER_ACCEPTED', priority:'HIGH', ride_id:ride.id, title:'Driver Accepted', message:'Driver accepted your booking. Please pay within 3 minutes.'});
+        notifyAdmins(db,{event_type:'RIDE_DRIVER_ACCEPTED_ADMIN', priority:'NORMAL', ride_id:ride.id, title:'Driver Accepted Booking', message:`${driverUser.name||'Driver'} accepted ${ride.pickup} → ${ride.drop}`, area:prof.area||prof.location||'Kalna'});
       }
       if(action==='pay'){
         if(ride.passenger_id!==user.id) return send(res,403,{detail:'Only passenger can pay'});
@@ -2301,8 +2979,32 @@ async function route(req,res){
         }
       }
       if(action==='cancel'){
-        if(ride.passenger_id!==user.id && ride.driver_id!==user.id) return send(res,403,{detail:'Only related user can cancel'});
-        ride.status='CANCELLED'; ride.cancelled_at=now();
+        const body = await getBody(req);
+        const actorIsAdmin = isAdminRole(user);
+        if(!actorIsAdmin && ride.passenger_id!==user.id && ride.driver_id!==user.id) return send(res,403,{detail:'Only related passenger/driver can cancel'});
+        const currentStatus = String(ride.status||'').toUpperCase();
+        if(['COMPLETED','CANCELLED','PAYMENT_TIMEOUT'].includes(currentStatus)) return send(res,409,{detail:'এই ride আর cancel করা যাবে না'});
+        if(currentStatus==='STARTED' && !actorIsAdmin) return send(res,409,{detail:'Ride start হয়ে গেলে app থেকে cancel নয়; support/SOS ব্যবহার করুন'});
+        if(currentStatus==='REQUESTED' && ride.driver_id && ride.driver_id!==user.id && ride.passenger_id!==user.id && !actorIsAdmin) return send(res,403,{detail:'Not allowed'});
+        ride.previous_status = currentStatus;
+        ride.status='CANCELLED';
+        ride.cancelled_at=now();
+        ride.cancelled_by=user.id;
+        ride.cancelled_by_role=user.role;
+        ride.cancel_reason=String(body.reason||body.cancel_reason||'User cancelled from app').slice(0,250);
+        ride.cancellation_fee=0;
+        if(String(ride.payment_status||'').toUpperCase()==='PAID'){
+          ride.refund_status = ride.refund_status || 'REFUND_REQUIRED';
+          db.refund_requests = db.refund_requests || [];
+          if(!db.refund_requests.find(x=>x.ride_id===ride.id && ['REQUESTED','UNDER_REVIEW','APPROVED'].includes(String(x.status||'')))){
+            db.refund_requests.push({id:uid('ref'), ride_id:ride.id, user_id:ride.passenger_id, amount:Number(ride.estimated_fare||0), reason:'Ride cancelled after payment', status:'REQUESTED', created_at:now(), area:ride.area||'Kalna'});
+          }
+        } else {
+          ride.refund_status = 'NOT_REQUIRED';
+        }
+        notifyUsers(db, notificationTargets(db,{user_id:ride.passenger_id}), {event_type:'RIDE_CANCELLED', priority:'HIGH', ride_id:ride.id, title:'Ride Cancelled', message:`Ride cancelled: ${ride.cancel_reason}`});
+        if(ride.driver_id) notifyUsers(db, notificationTargets(db,{user_id:ride.driver_id}), {event_type:'RIDE_CANCELLED', priority:'HIGH', ride_id:ride.id, title:'Ride Cancelled', message:`Ride cancelled: ${ride.cancel_reason}`});
+        notifyAdmins(db,{event_type:'RIDE_CANCELLED_ADMIN', priority:'NORMAL', ride_id:ride.id, title:'Ride Cancelled', message:`${ride.pickup||''} → ${ride.drop||''} · ${currentStatus} · ${ride.cancel_reason}`});
       }
       audit(db,user.id,'RIDE_'+action.toUpperCase(),'ride',ride.id,{});
       saveDb(db);
@@ -2664,11 +3366,20 @@ async function route(req,res){
       if(!prof) return send(res,404,{detail:'Driver profile not found'});
       if(!isMainAdmin(user)){ const allowed = filterDriversForAdmin(db,user,[prof]).length>0; if(!allowed) return send(res,403,{detail:'Sub Admin can manage own area drivers only'}); }
       const action = adminDriverAction[2];
-      if(action==='approve') { prof.status='APPROVED'; notifyUsers(db, notificationTargets(db,{user_id:prof.user_id}), {event_type:'DRIVER_APPROVED', priority:'HIGH', title:'Driver Approved', message:'Your driver profile is approved. You can go online now.'}); }
+      if(action==='approve') {
+        prof.status='APPROVED';
+        // Sprint-6E: Profile approval from admin means driver can go online; sync KYC too.
+        prof.kyc_status='VERIFIED';
+        prof.kyc_rejection_reason='';
+        prof.kyc_reviewed_at=now();
+        prof.kyc_reviewed_by=user.id;
+        prof.kyc_last_message='Admin approved profile and KYC. Driver can go online.';
+        notifyUsers(db, notificationTargets(db,{user_id:prof.user_id}), {event_type:'DRIVER_APPROVED', priority:'HIGH', title:'Driver Approved', message:'Your driver profile and KYC are approved. You can go online now.'});
+      }
       if(action==='reject') { prof.status='REJECTED'; prof.online=false; notifyUsers(db, notificationTargets(db,{user_id:prof.user_id}), {event_type:'DRIVER_REJECTED', priority:'HIGH', title:'Driver Rejected', message:'Your driver profile was rejected. Contact support.'}); }
       if(action==='offline') { prof.online=false; notifyUsers(db, notificationTargets(db,{user_id:prof.user_id}), {event_type:'DRIVER_OFFLINE_BY_ADMIN', priority:'NORMAL', title:'Set Offline', message:'Admin set your driver profile offline.'}); }
       if(action==='suspend') { prof.status='SUSPENDED'; prof.online=false; prof.suspended_at=now(); prof.suspended_by=user.id; notifyUsers(db, notificationTargets(db,{user_id:prof.user_id}), {event_type:'DRIVER_SUSPENDED', priority:'HIGH', title:'Driver Suspended', message:'Your driver profile is suspended by admin. Contact support.'}); }
-      if(action==='reactivate') { prof.status='APPROVED'; prof.reactivated_at=now(); prof.reactivated_by=user.id; notifyUsers(db, notificationTargets(db,{user_id:prof.user_id}), {event_type:'DRIVER_REACTIVATED', priority:'HIGH', title:'Driver Reactivated', message:'Your driver profile is active again. You can go online.'}); }
+      if(action==='reactivate') { prof.status='APPROVED'; if(String(prof.kyc_status||'').toUpperCase()!=='REJECTED') prof.kyc_status='VERIFIED'; prof.reactivated_at=now(); prof.reactivated_by=user.id; notifyUsers(db, notificationTargets(db,{user_id:prof.user_id}), {event_type:'DRIVER_REACTIVATED', priority:'HIGH', title:'Driver Reactivated', message:'Your driver profile is active again. You can go online.'}); }
       prof.admin_reviewed_at = now();
       prof.admin_reviewed_by = user.id;
       audit(db,user.id,'ADMIN_DRIVER_'+action.toUpperCase(),'driver_profile',prof.id,{});
@@ -2695,6 +3406,7 @@ async function route(req,res){
       db.service_area = db.service_area || defaultDb().service_area;
       if(body.name !== undefined) db.service_area.name = String(body.name || 'Kalna Sub-Division').slice(0,80);
       if(body.geofence_enabled !== undefined) db.service_area.geofence_enabled = !!body.geofence_enabled;
+      if(body.driver_auto_approve_inside_service_area !== undefined) db.service_area.driver_auto_approve_inside_service_area = !!body.driver_auto_approve_inside_service_area;
       if(body.road_distance_multiplier !== undefined && !Number.isNaN(Number(body.road_distance_multiplier))) db.service_area.road_distance_multiplier = Number(body.road_distance_multiplier);
       db.service_area.bounds = db.service_area.bounds || defaultDb().service_area.bounds;
       for(const k of ['minLat','maxLat','minLng','maxLng']){ if(body[k] !== undefined && !Number.isNaN(Number(body[k]))) db.service_area.bounds[k] = Number(body[k]); }
@@ -3102,6 +3814,25 @@ async function route(req,res){
 
 
 
+
+    if(method==='GET' && pathname==='/api/maps/public-config'){
+      const user = requireUser(req,res,db); if(!user) return;
+      const m = mapOptions(db);
+      const provider = String(m.provider || 'DEMO').toUpperCase();
+      const key = provider === 'MAPPLS' ? mapplsStaticKey() : '';
+      return send(res,200,{
+        ok:true,
+        provider,
+        has_key:!!key,
+        mappls_static_key:key,
+        access_token:key,
+        sdk_url:key ? `https://sdk.mappls.com/map/sdk/web?v=3.0&access_token=${encodeURIComponent(key)}` : '',
+        plugins_url:key ? `https://apis.mappls.com/advancedmaps/api/${encodeURIComponent(key)}/map_sdk_plugins?v=3.0&libraries=search` : '',
+        allowed_domain: process.env.MAPPLS_ALLOWED_DOMAIN || '',
+        note:'Mappls Web SDK needs the static key in browser. Restrict this key to ride.nexoofficial.in in Mappls Console.'
+      });
+    }
+
     if(method==='GET' && pathname==='/api/maps/options'){
       const user = requireUser(req,res,db); if(!user) return;
       return send(res,200,{ok:true, map:mapOptions(db), service_area:db.service_area});
@@ -3111,6 +3842,15 @@ async function route(req,res){
       const user = requireUser(req,res,db); if(!user) return;
       const q = u.searchParams.get('q') || '';
       return send(res,200,{ok:true, places:searchablePlaces(db,q), provider:mapOptions(db).provider});
+    }
+
+    if(method==='GET' && pathname==='/api/maps/reverse'){
+      const user = requireUser(req,res,db); if(!user) return;
+      const lat = Number(u.searchParams.get('lat'));
+      const lng = Number(u.searchParams.get('lng'));
+      if(!Number.isFinite(lat) || !Number.isFinite(lng)) return send(res,400,{detail:'lat and lng required'});
+      const list = nearbyPlaces(db, lat, lng, Number(u.searchParams.get('limit') || 8));
+      return send(res,200,{ok:true, query:{lat,lng}, nearest:list[0]||null, places:list, inside:isInsideServiceArea(db,{lat,lng}), provider:mapOptions(db).provider});
     }
 
     if(method==='GET' && pathname==='/api/maps/route'){
@@ -3632,6 +4372,98 @@ async function route(req,res){
       return send(res,200,{ok:true, ...deploymentStatus(db)});
     }
 
+
+
+    const rideDetailsMatch = pathname.match(/^\/api\/rides\/([^/]+)\/(details|detail)$/);
+    if(method==='GET' && rideDetailsMatch){
+      const user = requireUser(req,res,db); if(!user) return;
+      const ride = (db.rides||[]).find(r=>r.id===rideDetailsMatch[1]);
+      if(!ride) return send(res,404,{detail:'Ride not found'});
+      if(!isAdminRole(user) && ride.passenger_id!==user.id && ride.driver_id!==user.id) return send(res,403,{detail:'Only related passenger/driver can view ride details'});
+      const passenger = db.users.find(u=>u.id===ride.passenger_id) || {};
+      const driverUser = db.users.find(u=>u.id===ride.driver_id) || {};
+      const driverProfile = db.driver_profiles.find(d=>d.user_id===ride.driver_id) || {};
+      const order = (db.payment_orders||[]).find(o=>o.id===ride.payment_order_id || o.ride_id===ride.id) || null;
+      const refunds = (db.refund_requests||[]).filter(x=>x.ride_id===ride.id).slice(-10).reverse();
+      const timeline = [
+        ['created_at','Booking requested'], ['accepted_at','Driver accepted'], ['paid_at','Payment confirmed'],
+        ['arrived_at','Driver reached pickup'], ['started_at','Ride started'], ['completed_at','Ride completed'], ['cancelled_at','Ride cancelled']
+      ].filter(([k])=>ride[k]).map(([k,label])=>({key:k,label,at:ride[k]}));
+      const details = {
+        ride: rideDto(ride,db,user),
+        timeline,
+        passenger:{id:passenger.id||'', name:passenger.name||'', mobile:passenger.mobile||''},
+        driver:{id:driverUser.id||'', name:driverUser.name||'', mobile:driverUser.mobile||'', vehicle_no:driverProfile.vehicle_no||ride.driver_vehicle_no||'', rating:driverProfile.rating||ride.driver_rating||5},
+        payment: order ? {...order, secret:null} : {status:ride.payment_status||'PENDING', amount:Number(ride.estimated_fare||0), provider:ride.payment_provider||paymentProviderMode(db), payment_ref:ride.payment_ref||''},
+        finance: (!isAdminRole(user) && user.role==='PASSENGER')
+          ? {fare:Number(ride.estimated_fare||0), payment_status:ride.payment_status||'PENDING', refund_status:ride.refund_status||'NOT_REQUIRED'}
+          : {fare:Number(ride.estimated_fare||0), driver_earning:Number(ride.driver_earning||0), platform_commission:Number(ride.platform_commission||0), settlement_status:ride.settlement_status||'PENDING', refund_status:ride.refund_status||'NOT_REQUIRED'},
+        refunds,
+        can_cancel: !['COMPLETED','CANCELLED','PAYMENT_TIMEOUT'].includes(String(ride.status||'').toUpperCase()) && (String(ride.status||'').toUpperCase()!=='STARTED' || isAdminRole(user)),
+        cancel_note: String(ride.status||'').toUpperCase()==='STARTED' ? 'Ride start হয়ে গেলে support/SOS ব্যবহার করুন' : 'Ride complete হওয়ার আগে cancel করা যাবে। Paid ride হলে refund review তৈরি হবে।'
+      };
+      return send(res,200,{ok:true, ...details});
+    }
+
+    if(method==='GET' && pathname==='/api/driver/payout-requests'){
+      const user = requireUser(req,res,db); if(!user) return;
+      if(user.role!=='DRIVER') return send(res,403,{detail:'Driver only'});
+      const prof = db.driver_profiles.find(d=>d.user_id===user.id) || {};
+      const requests=(db.driver_payout_requests||[]).filter(x=>x.driver_id===user.id).slice(-50).reverse();
+      return send(res,200,{ok:true, summary:{pending_payout:Number(prof.pending_payout||0), paid_payout:Number(prof.paid_payout||0), request_count:requests.length}, requests});
+    }
+
+    if(method==='POST' && pathname==='/api/driver/payout-request'){
+      const user = requireUser(req,res,db); if(!user) return;
+      if(user.role!=='DRIVER') return send(res,403,{detail:'Driver only'});
+      const body = await getBody(req);
+      const prof = db.driver_profiles.find(d=>d.user_id===user.id) || {};
+      const amount = Math.round(Number(prof.pending_payout||0)*100)/100;
+      if(amount<=0) return send(res,409,{detail:'Pending payout নেই'});
+      const existing=(db.driver_payout_requests||[]).find(x=>x.driver_id===user.id && ['REQUESTED','UNDER_REVIEW'].includes(String(x.status||'')));
+      if(existing) return send(res,409,{detail:'আগের payout request pending আছে', request:existing});
+      const pendingRides=(db.rides||[]).filter(r=>r.driver_id===user.id && r.status==='COMPLETED' && r.settlement_status!=='PAID');
+      const reqObj={id:uid('dpr'), driver_id:user.id, amount, ride_count:pendingRides.length, ride_ids:pendingRides.map(r=>r.id), status:'REQUESTED', payout_method:String(body.payout_method||'UPI/Bank'), payout_account:String(body.payout_account||'').slice(0,120), note:String(body.note||'Driver payout requested from app').slice(0,200), created_at:now(), area:prof.area||'Kalna'};
+      db.driver_payout_requests = db.driver_payout_requests || [];
+      db.driver_payout_requests.push(reqObj);
+      notifyAdmins(db,{event_type:'DRIVER_PAYOUT_REQUEST', priority:'NORMAL', title:'Driver Payout Request', message:`${user.name||'Driver'} requested payout ₹${amount}`, data:{request_id:reqObj.id, driver_id:user.id}});
+      audit(db,user.id,'DRIVER_PAYOUT_REQUEST','driver',user.id,{amount, request_id:reqObj.id});
+      saveDb(db);
+      return send(res,200,{ok:true, request:reqObj});
+    }
+
+    if(method==='GET' && pathname==='/api/admin/driver-payout-requests'){
+      const user = requireUser(req,res,db); if(!user) return;
+      if(!isAdminRole(user)) return send(res,403,{detail:'Admin only'});
+      const scopedDrivers = new Set(filterDriversForAdmin(db,user,db.driver_profiles).map(d=>d.user_id));
+      const requests=(db.driver_payout_requests||[]).filter(x=>isMainAdmin(user)||scopedDrivers.has(x.driver_id)).slice(-100).reverse().map(x=>{const u=db.users.find(y=>y.id===x.driver_id)||{};const p=db.driver_profiles.find(d=>d.user_id===x.driver_id)||{};return {...x, driver_name:u.name||'', driver_mobile:u.mobile||'', vehicle_no:p.vehicle_no||''};});
+      return send(res,200,{ok:true, requests, summary:{requested:requests.filter(x=>x.status==='REQUESTED').length, paid:requests.filter(x=>x.status==='PAID').length, requested_amount:Math.round(requests.filter(x=>x.status==='REQUESTED').reduce((a,x)=>a+Number(x.amount||0),0)*100)/100}});
+    }
+
+    const adminDriverPayoutRequestPay = pathname.match(/^\/api\/admin\/driver-payout-requests\/([^/]+)\/pay$/);
+    if(method==='POST' && adminDriverPayoutRequestPay){
+      const user = requireUser(req,res,db); if(!user) return;
+      if(!isMainAdmin(user)) return send(res,403,{detail:'Main admin only'});
+      const reqObj=(db.driver_payout_requests||[]).find(x=>x.id===adminDriverPayoutRequestPay[1]);
+      if(!reqObj) return send(res,404,{detail:'Payout request not found'});
+      if(reqObj.status==='PAID') return send(res,409,{detail:'Already paid'});
+      const body=await getBody(req);
+      const driverId=reqObj.driver_id;
+      const pendingRides=db.rides.filter(r=>r.driver_id===driverId && r.status==='COMPLETED' && r.settlement_status!=='PAID');
+      if(!pendingRides.length) return send(res,409,{detail:'No pending payout for this driver'});
+      const amount=Math.round(pendingRides.reduce((a,r)=>a+Number(r.driver_earning||0),0)*100)/100;
+      const settlement={id:uid('set'), driver_id:driverId, amount, ride_count:pendingRides.length, ride_ids:pendingRides.map(r=>r.id), request_id:reqObj.id, payment_ref:String(body.payment_ref||reqObj.payout_account||'Manual payout'), note:String(body.note||'Driver payout request paid'), paid_by:user.id, paid_at:now(), status:'PAID'};
+      for(const r of pendingRides){ r.settlement_status='PAID'; r.settlement_id=settlement.id; r.settled_at=settlement.paid_at; }
+      db.settlements.push(settlement);
+      reqObj.status='PAID'; reqObj.settlement_id=settlement.id; reqObj.paid_at=settlement.paid_at; reqObj.payment_ref=settlement.payment_ref; reqObj.paid_amount=amount;
+      const prof=db.driver_profiles.find(d=>d.user_id===driverId);
+      if(prof){ prof.pending_payout=Math.max(0,Math.round((Number(prof.pending_payout||0)-amount)*100)/100); prof.paid_payout=Math.round((Number(prof.paid_payout||0)+amount)*100)/100; prof.last_payout_at=settlement.paid_at; }
+      notifyUsers(db, notificationTargets(db,{user_id:driverId}), {event_type:'DRIVER_PAYOUT_PAID', priority:'HIGH', title:'Payout Paid', message:`Payout ₹${amount} paid/marked paid.`});
+      audit(db,user.id,'DRIVER_PAYOUT_REQUEST_PAID','driver',driverId,{request_id:reqObj.id, settlement_id:settlement.id, amount});
+      saveDb(db);
+      return send(res,200,{ok:true, settlement, request:reqObj, ...settlementSummary(db)});
+    }
+
     if(method==='GET' && pathname==='/api/admin/safety-events'){
       const user = requireUser(req,res,db); if(!user) return;
       if(!isAdminRole(user)) return send(res,403,{detail:'Admin only'});
@@ -3675,6 +4507,80 @@ async function route(req,res){
         sub_admin_commission_paid:subCms.paid_amount,
         rated: scopedRides.filter(r=>r.rating_by_passenger).length
       }});
+    }
+
+
+    // v2.0 Sprint-5F - Admin dashboard details/edit APIs
+    if(method==='GET' && pathname==='/api/admin/users'){
+      const user = requireUser(req,res,db); if(!user) return;
+      if(!isAdminRole(user)) return send(res,403,{detail:'Admin only'});
+      const users = filterUsersForAdmin(db,user,db.users).slice(-500).reverse().map(u=>({
+        id:u.id, name:u.name||'', mobile:u.mobile||'', email:u.email||'', role:u.role||'PASSENGER', area:u.area||u.assigned_area||'', created_at:u.created_at||'', updated_at:u.updated_at||'', last_login_at:u.last_login_at||''
+      }));
+      return send(res,200,{ok:true, users, summary:{total:users.length, admins:users.filter(u=>u.role==='ADMIN').length, drivers:users.filter(u=>u.role==='DRIVER').length, passengers:users.filter(u=>u.role==='PASSENGER').length}});
+    }
+
+    const adminUserUpdate = pathname.match(/^\/api\/admin\/users\/([^/]+)\/update$/);
+    if(method==='POST' && adminUserUpdate){
+      const user = requireUser(req,res,db); if(!user) return;
+      if(!isAdminRole(user)) return send(res,403,{detail:'Admin only'});
+      const target = db.users.find(u=>u.id===adminUserUpdate[1]);
+      if(!target) return send(res,404,{detail:'User not found'});
+      if(!isMainAdmin(user) && target.area && target.area!==user.area && target.assigned_area!==user.area) return send(res,403,{detail:'Sub Admin can edit own area users only'});
+      const body = await getBody(req);
+      if(body.name!==undefined) target.name=String(body.name||'').slice(0,80);
+      if(body.mobile!==undefined) target.mobile=String(body.mobile||'').replace(/\D/g,'').slice(-10) || target.mobile;
+      if(body.email!==undefined) target.email=String(body.email||'').slice(0,120);
+      if(body.area!==undefined){ target.area=String(body.area||'').slice(0,80); target.assigned_area=target.area; }
+      target.updated_at=now();
+      audit(db,user.id,'ADMIN_USER_UPDATE','user',target.id,{fields:Object.keys(body||{})});
+      saveDb(db);
+      return send(res,200,{ok:true,user:{id:target.id,name:target.name,mobile:target.mobile,email:target.email,role:target.role,area:target.area}});
+    }
+
+    const adminDriverUpdate = pathname.match(/^\/api\/admin\/drivers\/([^/]+)\/update$/);
+    if(method==='POST' && adminDriverUpdate){
+      const user = requireUser(req,res,db); if(!user) return;
+      if(!isAdminRole(user)) return send(res,403,{detail:'Admin only'});
+      const prof = db.driver_profiles.find(d=>d.id===adminDriverUpdate[1] || d.user_id===adminDriverUpdate[1]);
+      if(!prof) return send(res,404,{detail:'Driver profile not found'});
+      if(!isMainAdmin(user)){ const allowed = filterDriversForAdmin(db,user,[prof]).length>0; if(!allowed) return send(res,403,{detail:'Sub Admin can edit own area drivers only'}); }
+      const body = await getBody(req);
+      const du = db.users.find(u=>u.id===prof.user_id);
+      if(du){
+        if(body.name!==undefined) du.name=String(body.name||du.name||'').slice(0,80);
+        if(body.mobile!==undefined) du.mobile=String(body.mobile||du.mobile||'').replace(/\D/g,'').slice(-10) || du.mobile;
+        if(body.location!==undefined || body.area!==undefined){ du.area=String(body.location||body.area||du.area||'').slice(0,80); du.assigned_area=du.area; }
+        du.updated_at=now();
+      }
+      if(body.vehicle_no!==undefined) prof.vehicle_no=String(body.vehicle_no||'').toUpperCase().slice(0,30);
+      if(body.location!==undefined || body.area!==undefined) prof.location=String(body.location||body.area||prof.location||'').slice(0,80);
+      if(body.status!==undefined && ['PENDING','APPROVED','REJECTED','SUSPENDED'].includes(String(body.status).toUpperCase())){
+        prof.status=String(body.status).toUpperCase(); if(prof.status!=='APPROVED') prof.online=false;
+      }
+      prof.updated_at=now(); prof.admin_reviewed_at=now(); prof.admin_reviewed_by=user.id;
+      audit(db,user.id,'ADMIN_DRIVER_UPDATE','driver_profile',prof.id,{fields:Object.keys(body||{})});
+      saveDb(db);
+      return send(res,200,{ok:true, driver_profile:prof});
+    }
+
+    const adminRideUpdate = pathname.match(/^\/api\/admin\/rides\/([^/]+)\/update$/);
+    if(method==='POST' && adminRideUpdate){
+      const user = requireUser(req,res,db); if(!user) return;
+      if(!isAdminRole(user)) return send(res,403,{detail:'Admin only'});
+      const ride = db.rides.find(r=>r.id===adminRideUpdate[1]);
+      if(!ride) return send(res,404,{detail:'Ride not found'});
+      if(!isMainAdmin(user)){ const allowed = filterRidesForAdmin(db,user,[ride]).length>0; if(!allowed) return send(res,403,{detail:'Sub Admin can edit own area rides only'}); }
+      const body = await getBody(req);
+      if(body.pickup!==undefined) ride.pickup=String(body.pickup||ride.pickup||'').slice(0,120);
+      if(body.drop!==undefined) ride.drop=String(body.drop||ride.drop||'').slice(0,120);
+      if(body.estimated_fare!==undefined && !Number.isNaN(Number(body.estimated_fare))) ride.estimated_fare=Number(body.estimated_fare);
+      if(body.payment_status!==undefined) ride.payment_status=String(body.payment_status||ride.payment_status||'').toUpperCase().slice(0,30);
+      if(body.status!==undefined && isMainAdmin(user)) ride.status=String(body.status||ride.status||'').toUpperCase().slice(0,40);
+      ride.updated_at=now();
+      audit(db,user.id,'ADMIN_RIDE_UPDATE','ride',ride.id,{fields:Object.keys(body||{})});
+      saveDb(db);
+      return send(res,200,{ok:true, ride:rideDto(ride,db,user)});
     }
 
     send(res,404,{detail:'Not found'});

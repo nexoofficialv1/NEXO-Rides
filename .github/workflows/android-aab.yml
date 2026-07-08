@@ -1,17 +1,12 @@
-name: Build NEXO Ride Android AAB
+name: Build NEXO Ride AAB 7A
 
 on:
   workflow_dispatch:
-    inputs:
-      server_url:
-        description: "Live NEXO Ride URL, example: https://your-domain.com/app/?v=136v37"
-        required: true
-        default: "https://your-nexo-ride-server.example.com/app/?v=136v37"
 
 jobs:
   build-aab:
-    name: Build Android App Bundle
     runs-on: ubuntu-latest
+    name: Build Android App Bundle
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,36 +15,18 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
-          node-version: "22"
-      - name: Prepare Android wrapper
-        working-directory: android_build_prep
-        run: |
-          cp package.android-wrapper.json package.json
-          npm install
-          npm install -D typescript
-          cat > capacitor.config.ts <<CONFIG
-          import type { CapacitorConfig } from '@capacitor/cli';
-          const config: CapacitorConfig = {
-            appId: 'com.astratechnologies.nexoride',
-            appName: 'NEXO Ride',
-            webDir: 'web',
-            server: { url: '${{ inputs.server_url }}', cleartext: false }
-          };
-          export default config;
-          CONFIG
-          npx cap add android
-          npx cap sync android
-      - name: Build release AAB
-        working-directory: android_build_prep/android
-        run: |
-          chmod +x ./gradlew
-          ./gradlew bundleRelease
+          gradle-version: 8.10.2
+      - name: Build AAB
+        working-directory: apk
+        run: gradle :app:bundleRelease --stacktrace
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NEXO-Ride-v1-0-36-AAB
-          path: android_build_prep/android/app/build/outputs/bundle/release/*.aab
+          name: NEXO_Ride_AAB_Sprint7A
+          path: apk/app/build/outputs/bundle/release/*.aab
           retention-days: 30
