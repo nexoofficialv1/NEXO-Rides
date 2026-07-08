@@ -3,7 +3,6 @@ package com.astratechnologies.nexoride;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
@@ -63,8 +62,15 @@ public class MainActivity extends Activity {
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
         progressBar.setVisibility(View.GONE);
-        root.addView(webView, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
-        root.addView(progressBar, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 8));
+
+        root.addView(webView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        ));
+        root.addView(progressBar, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                8
+        ));
         setContentView(root);
 
         configureWebView();
@@ -88,9 +94,12 @@ public class MainActivity extends Activity {
         s.setAllowFileAccess(true);
         s.setAllowContentAccess(true);
         s.setMediaPlaybackRequiresUserGesture(false);
+
         String ua = s.getUserAgentString();
         if (ua == null) ua = "";
-        if (!ua.contains("NEXO-Ride-Android")) s.setUserAgentString(ua + " NEXO-Ride-Android/7A");
+        if (!ua.contains("NEXO-Ride-Android")) {
+            s.setUserAgentString(ua + " NEXO-Ride-Android/7A");
+        }
 
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
@@ -161,21 +170,19 @@ public class MainActivity extends Activity {
             openExternal(url);
             return true;
         }
-
         return false;
     }
 
     private Uri ensureQueryParam(Uri uri, String key, String value) {
         if (uri.getQueryParameter(key) != null) return uri;
-        Uri.Builder b = uri.buildUpon();
-        b.appendQueryParameter(key, value);
-        return b.build();
+        return uri.buildUpon().appendQueryParameter(key, value).build();
     }
 
     private String urlFromDeepLink(Uri uri) {
         if (uri == null) return null;
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
         if (!"nexoride".equals(scheme)) return null;
+
         Uri.Builder b = Uri.parse(BASE_URL).buildUpon();
         for (String name : uri.getQueryParameterNames()) {
             String val = uri.getQueryParameter(name);
@@ -226,9 +233,11 @@ public class MainActivity extends Activity {
         }
 
         @Override
-        public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
-            if (MainActivity.this.filePathCallback != null) MainActivity.this.filePathCallback.onReceiveValue(null);
-            MainActivity.this.filePathCallback = filePathCallback;
+        public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback, FileChooserParams params) {
+            if (MainActivity.this.filePathCallback != null) {
+                MainActivity.this.filePathCallback.onReceiveValue(null);
+            }
+            MainActivity.this.filePathCallback = callback;
 
             Intent contentIntent = new Intent(Intent.ACTION_GET_CONTENT);
             contentIntent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -240,11 +249,17 @@ public class MainActivity extends Activity {
             if (hasCameraPermission()) {
                 try {
                     File photoFile = createImageFile();
-                    cameraPhotoUri = FileProvider.getUriForFile(MainActivity.this, "com.astratechnologies.nexoride.fileprovider", photoFile);
+                    cameraPhotoUri = FileProvider.getUriForFile(
+                            MainActivity.this,
+                            "com.astratechnologies.nexoride.fileprovider",
+                            photoFile
+                    );
                     cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
                     cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, cameraPhotoUri);
                     cameraIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-                } catch (Exception ignored) { cameraIntent = null; }
+                } catch (Exception ignored) {
+                    cameraIntent = null;
+                }
             }
 
             Intent chooser = new Intent(Intent.ACTION_CHOOSER);
@@ -280,8 +295,10 @@ public class MainActivity extends Activity {
                 } else if (data.getClipData() != null) {
                     int count = data.getClipData().getItemCount();
                     results = new Uri[count];
-                    for (int i = 0; i < count; i++) results[i] = data.getClipData().getItemAt(i).getUri();
-                } else if (data.getData() != null) {
+                    for (int i = 0; i < count; i++) {
+                        results[i] = data.getClipData().getItemAt(i).getUri();
+                    }
+                } else {
                     results = new Uri[]{data.getData()};
                 }
             }
@@ -292,18 +309,20 @@ public class MainActivity extends Activity {
     }
 
     private boolean hasLocationPermission() {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
-                checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
     private boolean hasCameraPermission() {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
     }
 
     private void requestNeededPermissions(boolean force) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
         List<String> perms = new ArrayList<>();
+
         if (!hasLocationPermission()) {
             perms.add(Manifest.permission.ACCESS_FINE_LOCATION);
             perms.add(Manifest.permission.ACCESS_COARSE_LOCATION);
@@ -313,19 +332,28 @@ public class MainActivity extends Activity {
             perms.add(Manifest.permission.POST_NOTIFICATIONS);
         }
         if (Build.VERSION.SDK_INT >= 33) {
-            if (checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) perms.add(Manifest.permission.READ_MEDIA_IMAGES);
-            if (checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) != PackageManager.PERMISSION_GRANTED) perms.add(Manifest.permission.READ_MEDIA_VIDEO);
+            if (checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.READ_MEDIA_IMAGES);
+            }
+            if (checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.READ_MEDIA_VIDEO);
+            }
         } else if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             perms.add(Manifest.permission.READ_EXTERNAL_STORAGE);
         }
-        if (!perms.isEmpty()) requestPermissions(perms.toArray(new String[0]), REQ_PERMISSIONS);
-        else if (force) Toast.makeText(this, "All permissions already allowed", Toast.LENGTH_SHORT).show();
+
+        if (!perms.isEmpty()) {
+            requestPermissions(perms.toArray(new String[0]), REQ_PERMISSIONS);
+        } else if (force) {
+            Toast.makeText(this, "All permissions already allowed", Toast.LENGTH_SHORT).show();
+        }
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode != REQ_PERMISSIONS) return;
+
         boolean loc = hasLocationPermission();
         if (geoCallback != null && geoOrigin != null) {
             geoCallback.invoke(geoOrigin, loc, false);
@@ -375,6 +403,6 @@ public class MainActivity extends Activity {
         public String isNativeApp() { return "true"; }
 
         @JavascriptInterface
-        public String version() { return "2.0.7A"; }
+        public String version() { return "2.0.7A-FIX2"; }
     }
 }
