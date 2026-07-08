@@ -32,9 +32,8 @@ jobs:
 
       - name: Install Android SDK 34
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-          sdkmanager --list_installed | grep -E "platforms;android-34|build-tools;34.0.0|platform-tools" || true
+          yes | sdkmanager --licenses
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -47,18 +46,17 @@ jobs:
           java -version
           gradle --version
           ls -la
-          cat build.gradle
-          cat app/build.gradle
+          grep -n "compileSdk\|targetSdk\|androidx.core" app/build.gradle
 
       - name: Build Debug APK
         if: inputs.build_type == 'debug'
         working-directory: apk
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+        run: gradle :app:assembleDebug --stacktrace
 
       - name: Build Release APK unsigned
         if: inputs.build_type == 'release'
         working-directory: apk
-        run: gradle :app:assembleRelease --stacktrace --no-daemon
+        run: gradle :app:assembleRelease --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
